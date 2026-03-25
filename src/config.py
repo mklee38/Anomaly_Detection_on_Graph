@@ -1,0 +1,54 @@
+# 這個檔案讓你以後改參數不用到處找 notebook 裡的硬編碼。
+# src/config.py
+from curses import raw
+from dataclasses import dataclass  # Python 3.7+ 提供的裝飾器，讓我們可以用類別的方式定義資料結構，自動產生__init__、__repr__ 等方法，非常適合做設定檔
+from pathlib import Path  # 來自 pathlib，用來處理檔案路徑，比字串路徑更好用、更安全。
+import torch  # 只為了檢查是否有 GPU（torch.cuda.is_available()）。
+
+@dataclass
+class Config:
+    # 路徑
+    project_root: Path = Path(__file__).parent.parent  # : Path = type hint,  __file__: 目前這個 Python 檔案被執行時的路徑, Path(): 將字串轉成 Path 物件
+    data_dir: Path = project_root / "data"
+    raw_dir: Path = data_dir / "raw"
+    processed_dir: Path = data_dir / "processed"
+    elliptic_classes: Path = raw_dir / "elliptics_txs_classes.csv" 
+    elliptic_edges: Path = raw_dir / "elliptic_txs_edgelist.csv"
+    elliptic_features: Path = raw_dir / "elliptic_txs_features.csv"
+    processed_file: Path = processed_dir / "elliptic_processed.pt"
+
+    # 模型與訓練
+    model_name: str = "GraphSAGE"
+    hidden_dim: int = 64
+    num_layers: int = 2
+    aggregator: str = "mean"          # mean / lstm / pool (GraphSAGE 支援)
+    dropout: float = 0.2
+
+    lr: float = 0.01                  # 看訓練曲線調整，過大可能不收斂，過小可能學很慢
+    weight_decay: float = 5e-4        # 看訓練曲線調整，過大可能學不好，過小可能過擬合
+    epochs: int = 200                 # 看訓練曲線調整，過大可能過擬合，過小可能沒學好
+    patience: int = 30                # early stopping
+    batch_size: int = 2048            # 看 GPU 記憶體調整
+
+    # 資料分割 (Elliptic 經典設定)
+    train_time_steps: range = range(1, 35)   # 時間步 1~34 為 train/val
+    val_ratio: float = 0.1                   # 從 train_time_steps 裡再切出 10% 當 val，剩下 90% 當 train        
+    test_time_steps: range = range(35, 50)   # 35~49 為 test
+
+    # 裝置
+    device: str = "cuda" if torch.cuda.is_available() else "cpu"
+
+    # 實驗標記 (用來存 experiments/exp_xxx)
+    exp_name: str = "001_baseline"
+
+    # 額外特徵 (如果你在 02 加了)
+    use_degree: bool = True             # 之後 exp_002 改 False，因為 degree 是一個很強的特徵，可能會讓模型過度依賴它，反而學不到其他有用的特徵。
+    use_pagerank: bool = False          # 之後 exp_002 改 True
+
+    def __post_init__(self):            # __post_init__ 就是在 dataclass 物件「剛剛建立好」之後，馬上自動執行的初始化後處理函數。
+        self.processed_dir.mkdir(parents=True, exist_ok=True)   # 確保 processed 資料夾存在，parents=True 會自動建立不存在的父資料夾，exist_ok=True 會在資料夾已存在時不報錯。
+
+# 使用範例：在其他檔案 import
+# from config import Config
+# cfg = Config()
+# cfg.hidden_dim = 128   # 可以 override
