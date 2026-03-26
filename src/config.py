@@ -17,17 +17,20 @@ class Config:
     elliptic_features: Path = raw_dir / "elliptic_txs_features.csv"
     processed_file: Path = processed_dir / "elliptic_processed.pt"
 
+    # 實驗名稱 (用來存實驗結果的資料夾名稱，會在 experiments/ 下自動建立)
+    exp_name: str = "exp_001_baseline"          # Experiment Name
+   
     # 模型與訓練
     model_name: str = "GraphSAGE"
-    hidden_dim: int = 64
-    num_layers: int = 2
+    hidden_dim: int = 128
+    num_layers: int = 3
     aggregator: str = "mean"          # mean / lstm / pool (GraphSAGE 支援)
     dropout: float = 0.2
 
     lr: float = 0.01                  # 看訓練曲線調整，過大可能不收斂，過小可能學很慢
     weight_decay: float = 5e-4        # 看訓練曲線調整，過大可能學不好，過小可能過擬合
-    epochs: int = 200                 # 看訓練曲線調整，過大可能過擬合，過小可能沒學好
-    patience: int = 30                # early stopping
+    epochs: int = 100                 # 看訓練曲線調整，過大可能過擬合，過小可能沒學好
+    patience: int = 5                # early stopping
     batch_size: int = 2048            # 看 GPU 記憶體調整
 
     # 資料分割 (Elliptic 經典設定)
@@ -38,8 +41,6 @@ class Config:
     # 裝置
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
 
-    # 實驗標記 (用來存 experiments/exp_xxx)
-    exp_name: str = "001_baseline"
 
     # 額外特徵 (如果你在 02 加了)
     use_degree: bool = True             # 之後 exp_002 改 False，因為 degree 是一個很強的特徵，可能會讓模型過度依賴它，反而學不到其他有用的特徵。
@@ -47,8 +48,3 @@ class Config:
 
     def __post_init__(self):            # __post_init__ 就是在 dataclass 物件「剛剛建立好」之後，馬上自動執行的初始化後處理函數。
         self.processed_dir.mkdir(parents=True, exist_ok=True)   # 確保 processed 資料夾存在，parents=True 會自動建立不存在的父資料夾，exist_ok=True 會在資料夾已存在時不報錯。
-
-# 使用範例：在其他檔案 import
-# from config import Config
-# cfg = Config()
-# cfg.hidden_dim = 128   # 可以 override
