@@ -9,7 +9,38 @@ from datetime import datetime
 import os
 from typing import Tuple, Optional
 
+# ====================== Focal Loss ======================
+class FocalLoss(nn.Module):
+    """
+    Focal Loss for addressing class imbalance in binary classification.
+    Particularly effective for Graph Anomaly Detection on highly imbalanced datasets like Elliptic.
+    
+    Args:
+        alpha (float): Balancing factor for the minority class (default: 0.25)
+        gamma (float): Focusing parameter (default: 2.0). Higher gamma focuses more on hard examples.
+    """
+    def __init__(self, alpha: float = 0.25, gamma: float = 2.0):        # alpha 和 gamma 的預設值是根據原始 Focal Loss 論文建議的，對於二分類問題通常效果不錯
+        super().__init__()
+        self.alpha = alpha
+        self.gamma = gamma
+        print(f" FocalLoss initialized with alpha={alpha}, gamma={gamma}")
 
+    def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            logits: [batch_size, num_classes] raw model outputs
+            targets: [batch_size] ground truth labels (0 or 1)
+        """
+        # Compute cross entropy loss without reduction
+        ce_loss = F.cross_entropy(logits, targets, reduction='none')
+        
+        # Compute pt = p_t (probability of the true class)
+        pt = torch.exp(-ce_loss)
+        
+        # Focal loss: -α_t * (1 - p_t)^γ * log(p_t)
+        focal_loss = self.alpha * (1 - pt) ** self.gamma * ce_loss
+        
+        return focal_loss.mean()
 
 # ====================== 修改 train_model 函數 ======================
 def train_model(
@@ -31,13 +62,8 @@ def train_model(
     """
     optimizer = Adam(model.parameters(), lr=cfg.lr)
     
-    # ====================== Weighted CrossEntropy for Class Imbalance ======================
-    # Elliptic 資料集中 illicit (class 1) 只約佔 2%，給予較高權重
-    # 先試 30.0，你之後可以試 20.0 / 40.0 / 50.0 來微調
-    class_weights = torch.tensor([1.0, 12.0]).to(device)   # [licit_weight, illicit_weight]
-    criterion = nn.CrossEntropyLoss(weight=class_weights)
-    
-    print(f" Using Weighted CrossEntropy Loss with weights: {class_weights.cpu().tolist()}")
+    # ====================== 使用 Focal Loss ======================
+    criterion = FocalLoss(alpha=0.25, gamma=2.0).to(device)
 
     best_val_auc = 0.0
     patience_counter = 0
@@ -58,7 +84,7 @@ def train_model(
         optimizer.step()
 
         # === Validation ===
-        if epoch % 5 == 0 or epoch == cfg.epochs - 1:
+        if epoch % 10 == 0 or epoch == cfg.epochs - 1:
             model.eval()
             with torch.no_grad():
                 val_logits = model(x, edge_index)

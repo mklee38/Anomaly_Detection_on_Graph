@@ -10,8 +10,6 @@ import os
 from typing import Tuple, Optional
 
 
-
-# ====================== 修改 train_model 函數 ======================
 def train_model(
     model: nn.Module,
     x: torch.Tensor,
@@ -19,32 +17,28 @@ def train_model(
     y: torch.Tensor,
     train_idx: torch.Tensor,
     val_idx: torch.Tensor,
-    test_idx: torch.Tensor,
+    test_idx: torch.Tensor,           # ← Added for final evaluation
     cfg,
     device: torch.device,
-    exp_dir: Optional[str] = None,
+    exp_dir: Optional[str] = None,    # ← If provided, will auto-save results
     save_best: bool = True,
     save_dir: str = "../saved_models"
 ) -> Tuple[float, Optional[str], float, float, int]:
     """
-    Train the GraphSAGE model with Focal Loss + early stopping + final test evaluation.
+    Train the GraphSAGE model with early stopping and final test evaluation.
+    
+    Returns:
+        best_val_auc, best_model_path, test_auc, test_auprc, best_epoch
     """
     optimizer = Adam(model.parameters(), lr=cfg.lr)
-    
-    # ====================== Weighted CrossEntropy for Class Imbalance ======================
-    # Elliptic 資料集中 illicit (class 1) 只約佔 2%，給予較高權重
-    # 先試 30.0，你之後可以試 20.0 / 40.0 / 50.0 來微調
-    class_weights = torch.tensor([1.0, 12.0]).to(device)   # [licit_weight, illicit_weight]
-    criterion = nn.CrossEntropyLoss(weight=class_weights)
-    
-    print(f" Using Weighted CrossEntropy Loss with weights: {class_weights.cpu().tolist()}")
+    criterion = nn.CrossEntropyLoss()
 
     best_val_auc = 0.0
     patience_counter = 0
     best_model_state = None
     best_epoch = 0
 
-    print(f"Starting training for {cfg.epochs} epochs (patience={getattr(cfg, 'patience', 5)}) with Focal Loss...\n")
+    print(f"Starting training for {cfg.epochs} epochs (patience={getattr(cfg, 'patience', 5)})...\n")
 
     for epoch in range(cfg.epochs):
         # === Training ===
@@ -52,13 +46,13 @@ def train_model(
         optimizer.zero_grad()
 
         logits = model(x, edge_index)
-        loss = criterion(logits[train_idx], y[train_idx])   # ← 使用 FocalLoss
+        loss = criterion(logits[train_idx], y[train_idx])
 
         loss.backward()
         optimizer.step()
 
         # === Validation ===
-        if epoch % 5 == 0 or epoch == cfg.epochs - 1:
+        if epoch % 10 == 0 or epoch == cfg.epochs - 1:
             model.eval()
             with torch.no_grad():
                 val_logits = model(x, edge_index)
@@ -90,7 +84,7 @@ def train_model(
 
     # === Final Test Evaluation ===
     test_auc, test_auprc = evaluate_model(model, x, edge_index, y, test_idx)
-    
+
     # === Auto-save experiment results if exp_dir is provided ===
     if exp_dir is not None:
         from src.utils import save_experiment_results
@@ -105,7 +99,6 @@ def train_model(
         )
 
     return best_val_auc, best_model_path, test_auc, test_auprc, best_epoch
-
 
 
 def evaluate_model(
