@@ -1,11 +1,13 @@
 # src/create.py
 
+
+
+# ====================== Experiment Creation ======================
+
 import yaml
 import os
 from datetime import datetime
 from typing import Optional
-
-# ====================== Experiment Creation ======================
 
 def create_experiment(cfg, description: Optional[str] = None) -> str:
     """
@@ -78,7 +80,6 @@ def create_experiment_dir(exp_name: str) -> str:
     os.makedirs(exp_dir, exist_ok=True)
     print(f"實驗資料夾已建立：{exp_dir}")
     return exp_dir
-
 
 
 
@@ -184,3 +185,32 @@ def print_experiment_summary(exp_dir: str, cfg) -> None:
     print(f"     • config.yaml")
     print(f"     • results.json")
     print(f"     • model_best.pt")
+
+
+
+# ====================== Reproducibility ======================
+
+import random
+import numpy as np
+import torch
+import os
+
+def set_seed(seed: int = 42):
+    """
+    統一設定所有 random seed，確保實驗結果完全可重現。
+    建議在每次實驗開始時呼叫此函數。
+    """
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)   # 多 GPU 情況
+    
+    # 讓 CuDNN 行為確定（結果可重現，但訓練速度會稍慢）
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    
+    # Python hash seed
+    os.environ['PYTHONHASHSEED'] = str(seed)
+    
+    print(f" Random seed 已固定為 {seed}，所有隨機性已關閉，實驗結果可完全重現。")

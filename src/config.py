@@ -21,6 +21,7 @@ class Config:
     exp_name: str = "exp_001_baseline"          # Experiment Name
    
     # 模型與訓練
+    random_seed: int = 42                
     model_name: str = "GraphSAGE"
     hidden_dim: int = 128
     num_layers: int = 2
