@@ -23,11 +23,11 @@ class Config:
     # 模型與訓練
     model_name: str = "GraphSAGE"
     hidden_dim: int = 128
-    num_layers: int = 3
+    num_layers: int = 2
     aggregator: str = "mean"          # mean / lstm / pool (GraphSAGE 支援)
-    dropout: float = 0.2
+    dropout: float = 0.2              # 0.2，GraphSAGE 的 dropout rate，訓練時會隨機丟棄一些神經元，幫助防止過擬合。
 
-    lr: float = 0.01                  # 看訓練曲線調整，過大可能不收斂，過小可能學很慢
+    lr: float = 0.01                  # learning rate, 看訓練曲線調整，過大可能不收斂，過小可能學很慢
     weight_decay: float = 5e-4        # 看訓練曲線調整，過大可能學不好，過小可能過擬合
     epochs: int = 100                 # 看訓練曲線調整，過大可能過擬合，過小可能沒學好
     patience: int = 5                # early stopping
@@ -43,7 +43,7 @@ class Config:
 
 
     # 額外特徵 (如果你在 02 加了)
-    use_degree: bool = True             # 之後 exp_002 改 False，因為 degree 是一個很強的特徵，可能會讓模型過度依賴它，反而學不到其他有用的特徵。
+    use_degree: bool = False             # 之後 exp_002 改 False，因為 degree 是一個很強的特徵，可能會讓模型過度依賴它，反而學不到其他有用的特徵。
     use_pagerank: bool = False          # 之後 exp_002 改 True
 
     def __post_init__(self):            # __post_init__ 就是在 dataclass 物件「剛剛建立好」之後，馬上自動執行的初始化後處理函數。

@@ -2,10 +2,15 @@
 import pandas as pd
 import torch
 from torch_geometric.data import InMemoryDataset, Data       # InMemoryDataset 是 PyG 提供的基類，適合一次性讀取整個圖的資料集。Data 是 PyG 的核心資料結構，包含節點特徵、邊列表、標籤等。
-from torch_geometric.utils import to_undirected, degree
+from torch_geometric.utils import to_undirected, degree              
+import networkx as nx
+from torch_geometric.utils import to_networkx
+from torch_geometric.data import Data
+
 import os
 import numpy as np
 from sklearn.preprocessing import StandardScaler
+
 
 
 class EllipticDataset(InMemoryDataset):
@@ -19,10 +24,10 @@ class EllipticDataset(InMemoryDataset):
                  transform=None,
                  pre_transform=None,
                  pre_filter=None,
-                 use_degree: bool = True,       
+                 use_degree: bool = False,       
                  use_pagerank: bool = False):
-        self.use_degree = use_degree                     # 在 process() 裡，如果 use_degree 是 True，就會計算每個節點的 degree 並將其加入節點特徵
-        self.use_pagerank = use_pagerank                 # 在 process() 裡，如果 use_pagerank 是 True，就會計算每個節點的 pagerank 並將其加入節點特徵。
+        self.use_degree = use_degree                     
+        self.use_pagerank = use_pagerank                 
         super().__init__(root, transform, pre_transform, pre_filter)            # 檢查 processed_file 是否存在，如果不存在就呼叫 process()。
         self.load(self.processed_paths[0])
 
@@ -120,6 +125,7 @@ class EllipticDataset(InMemoryDataset):
         x = torch.tensor(node_features, dtype=torch.float)
         y = torch.tensor(labels, dtype=torch.long)
 
+        # === Degree feature ===
         if self.use_degree:
             if edge_index.shape[1] > 0:
                 deg = degree(edge_index[0], num_nodes=len(x)).float().unsqueeze(1)
@@ -128,7 +134,29 @@ class EllipticDataset(InMemoryDataset):
             else:
                 print("無邊，degree 無法計算")
 
-        data = Data(x=x, edge_index=edge_index, y=y, time_steps=torch.from_numpy(time_steps))
+        # === PageRank feature (networkx version - fixed) ===
+        if self.use_pagerank:
+            if edge_index.shape[1] > 0:
+                #import networkx as nx
+                #from torch_geometric.utils import to_networkx
+                #from torch_geometric.data import Data
+
+                print("正在計算 PageRank (networkx), 請耐心等待...")
+
+                temp_data = Data(edge_index=edge_index, num_nodes=x.size(0))
+                G = to_networkx(temp_data, to_undirected=True)
+
+                pr_dict = nx.pagerank(G, alpha=0.85, max_iter=100, tol=1e-06)
+
+                pr = torch.tensor([pr_dict.get(i, 0.0) for i in range(x.size(0))],
+                                  dtype=torch.float32).unsqueeze(1)
+
+                x = torch.cat([x, pr], dim=1)
+                print(f"加入 PageRank → x dim: {x.shape[1]}")
+            else:
+                print("無邊，PageRank 無法計算")
+
+
 
         # Save the processed data - create tuple manually (data_dict, slices, type)
         # This avoids edge loss from collate batching
