@@ -25,10 +25,17 @@ class EllipticDataset(InMemoryDataset):
                  pre_transform=None,
                  pre_filter=None,
                  use_degree: bool = False,       
-                 use_pagerank: bool = False):
+                 use_pagerank: bool = False,
+                 use_clustering: bool = False,     
+                 use_eigenvector: bool = False,     
+                 use_betweenness: bool = False):    
         self.use_degree = use_degree                     
         self.use_pagerank = use_pagerank                 
-        super().__init__(root, transform, pre_transform, pre_filter)            # 檢查 processed_file 是否存在，如果不存在就呼叫 process()。
+        self.use_clustering = use_clustering          
+        self.use_eigenvector = use_eigenvector         
+        self.use_betweenness = use_betweenness         
+        
+        super().__init__(root, transform, pre_transform, pre_filter)
         self.load(self.processed_paths[0])
 
     @property
@@ -155,6 +162,51 @@ class EllipticDataset(InMemoryDataset):
                 print(f"加入 PageRank → x dim: {x.shape[1]}")
             else:
                 print("無邊，PageRank 無法計算")
+
+        
+        # === 新增的 Graph Structure Features ===
+        if self.use_clustering or self.use_eigenvector or self.use_betweenness:
+            print("正在計算額外 graph structure features (networkx)... 請耐心等待")
+
+            temp_data = Data(edge_index=edge_index, num_nodes=x.size(0))
+            G = to_networkx(temp_data, to_undirected=True)
+
+        # Clustering Coefficient
+        if self.use_clustering:
+            print("計算 Clustering Coefficient...")
+            clustering_dict = nx.clustering(G)
+            clustering = torch.tensor([clustering_dict.get(i, 0.0) for i in range(x.size(0))],
+                                      dtype=torch.float32).unsqueeze(1)
+            x = torch.cat([x, clustering], dim=1)
+            print(f"加入 Clustering Coefficient → x dim: {x.shape[1]}")
+
+        # Eigenvector Centrality
+        if self.use_eigenvector:
+            print("計算 Eigenvector Centrality...")
+            try:
+                eigenvector_dict = nx.eigenvector_centrality(G, max_iter=500, tol=1e-06)
+                eigenvector = torch.tensor([eigenvector_dict.get(i, 0.0) for i in range(x.size(0))],
+                                           dtype=torch.float32).unsqueeze(1)
+                x = torch.cat([x, eigenvector], dim=1)
+                print(f"加入 Eigenvector Centrality → x dim: {x.shape[1]}")
+            except:
+                print("Eigenvector Centrality 計算失敗，使用 0 替代")
+                zero_vec = torch.zeros(x.size(0), 1, dtype=torch.float32)
+                x = torch.cat([x, zero_vec], dim=1)
+
+        # Betweenness Centrality（警告：非常慢！）
+        if self.use_betweenness:
+            print("計算 Betweenness Centrality...（這可能需要很長時間）")
+            try:
+                betweenness_dict = nx.betweenness_centrality(G, normalized=True)
+                betweenness = torch.tensor([betweenness_dict.get(i, 0.0) for i in range(x.size(0))],
+                                           dtype=torch.float32).unsqueeze(1)
+                x = torch.cat([x, betweenness], dim=1)
+                print(f"加入 Betweenness Centrality → x dim: {x.shape[1]}")
+            except Exception as e:
+                print(f"Betweenness Centrality 計算失敗: {e}")
+                zero_vec = torch.zeros(x.size(0), 1, dtype=torch.float32)
+                x = torch.cat([x, zero_vec], dim=1)
 
 
 

@@ -28,10 +28,12 @@ class Config:
     aggregator: str = "mean"          # mean / lstm / pool (GraphSAGE 支援)
     dropout: float = 0.2              # 0.2，GraphSAGE 的 dropout rate，訓練時會隨機丟棄一些神經元，幫助防止過擬合。
 
-    lr: float = 0.01                  # learning rate, 看訓練曲線調整，過大可能不收斂，過小可能學很慢
+    heads: int = 8                    # 新增這一行（GAT 專用）
+
+    lr: float = 0.002                 # learning rate, 看訓練曲線調整，過大可能不收斂，過小可能學很慢
     weight_decay: float = 5e-4        # 看訓練曲線調整，過大可能學不好，過小可能過擬合
-    epochs: int = 100                 # 看訓練曲線調整，過大可能過擬合，過小可能沒學好
-    patience: int = 5                # early stopping
+    epochs: int = 200                 # 看訓練曲線調整，過大可能過擬合，過小可能沒學好
+    patience: int = 25                # early stopping
     batch_size: int = 2048            # 看 GPU 記憶體調整
 
     # 資料分割 (Elliptic 經典設定)
@@ -44,8 +46,16 @@ class Config:
 
 
     # 額外特徵 (如果你在 02 加了)
-    use_degree: bool = False             # 之後 exp_002 改 False，因為 degree 是一個很強的特徵，可能會讓模型過度依賴它，反而學不到其他有用的特徵。
-    use_pagerank: bool = False          # 之後 exp_002 改 True
+    use_degree: bool = False            
+    use_pagerank: bool = False          
+    use_clustering: bool = False      
+    use_eigenvector: bool = False     
+    use_betweenness: bool = False     
 
     def __post_init__(self):            # __post_init__ 就是在 dataclass 物件「剛剛建立好」之後，馬上自動執行的初始化後處理函數。
         self.processed_dir.mkdir(parents=True, exist_ok=True)   # 確保 processed 資料夾存在，parents=True 會自動建立不存在的父資料夾，exist_ok=True 會在資料夾已存在時不報錯。
+
+        # 如果是 GAT 但沒有設定 heads，自動設為 8
+        if getattr(self, "model_name", "GraphSAGE").upper() == "GAT":
+            if not hasattr(self, "heads"):
+                self.heads = 8

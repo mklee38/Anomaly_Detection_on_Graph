@@ -1,5 +1,3 @@
-# src/train.py
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -7,11 +5,10 @@ from torch.optim import Adam
 from sklearn.metrics import roc_auc_score, average_precision_score
 from datetime import datetime
 import os
+import time
 from typing import Tuple, Optional
 
 
-
-# ====================== 修改 train_model 函數 ======================
 def train_model(
     model: nn.Module,
     x: torch.Tensor,
@@ -27,37 +24,38 @@ def train_model(
     save_dir: str = "../saved_models"
 ) -> Tuple[float, Optional[str], float, float, int]:
     """
-    Train the GraphSAGE model with Focal Loss + early stopping + final test evaluation.
+    Train the GNN model (GraphSAGE or GAT) with training time recording.
     """
     optimizer = Adam(model.parameters(), lr=cfg.lr)
     
-    # ====================== Weighted CrossEntropy for Class Imbalance ======================
-    # Elliptic 資料集中 illicit (class 1) 只約佔 2%，給予較高權重
-    # 先試 30.0，你之後可以試 20.0 / 40.0 / 50.0 來微調
-    class_weights = torch.tensor([1.0, 12.0]).to(device)   # [licit_weight, illicit_weight]
+    # Weighted CrossEntropy for Class Imbalance
+    class_weights = torch.tensor([1.0, 15.0]).to(device)
     criterion = nn.CrossEntropyLoss(weight=class_weights)
     
     print(f" Using Weighted CrossEntropy Loss with weights: {class_weights.cpu().tolist()}")
+    print(f" Training model: {getattr(cfg, 'model_name', 'Unknown')} | "
+          f"hidden_dim={cfg.hidden_dim}, layers={cfg.num_layers}, dropout={cfg.dropout}")
 
     best_val_auc = 0.0
     patience_counter = 0
     best_model_state = None
     best_epoch = 0
 
-    print(f"Starting training for {cfg.epochs} epochs (patience={getattr(cfg, 'patience', 5)}) with Focal Loss...\n")
+    # 開始計時
+    start_time = time.time()
+    print(f" Training started at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
 
     for epoch in range(cfg.epochs):
-        # === Training ===
         model.train()
         optimizer.zero_grad()
 
         logits = model(x, edge_index)
-        loss = criterion(logits[train_idx], y[train_idx])   # ← 使用 FocalLoss
+        loss = criterion(logits[train_idx], y[train_idx])
 
         loss.backward()
         optimizer.step()
 
-        # === Validation ===
+        # Validation
         if epoch % 5 == 0 or epoch == cfg.epochs - 1:
             model.eval()
             with torch.no_grad():
@@ -74,24 +72,33 @@ def train_model(
                     best_model_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
                 else:
                     patience_counter += 1
-                    if patience_counter >= getattr(cfg, 'patience', 5):
+                    if patience_counter >= getattr(cfg, 'patience', 25):
                         print(f"Early stopping triggered at epoch {epoch}!")
                         break
 
-    # === Save best model (timestamped) ===
+    # 結束計時
+    end_time = time.time()
+    training_time_seconds = end_time - start_time
+    training_time_minutes = training_time_seconds / 60
+
+    print(f"\n⏱ Training finished in {training_time_seconds:.1f} seconds "
+          f"({training_time_minutes:.2f} minutes)")
+
+    # Save best model
     best_model_path: Optional[str] = None
     if best_model_state is not None and save_best:
         os.makedirs(save_dir, exist_ok=True)
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        best_model_path = f"{save_dir}/graphsage_best_{ts}.pt"
+        model_prefix = getattr(cfg, "model_name", "graphsage").lower()
+        best_model_path = f"{save_dir}/{model_prefix}_best_{ts}.pt"
         
         torch.save(best_model_state, best_model_path)
-        print(f"\nBest model saved (val_auc={best_val_auc:.4f}, epoch={best_epoch}) → {best_model_path}")
+        print(f"Best model saved (val_auc={best_val_auc:.4f}, epoch={best_epoch}) → {best_model_path}")
 
-    # === Final Test Evaluation ===
+    # Final Test Evaluation
     test_auc, test_auprc = evaluate_model(model, x, edge_index, y, test_idx)
-    
-    # === Auto-save experiment results if exp_dir is provided ===
+
+    # Save experiment results
     if exp_dir is not None:
         from src.utils import save_experiment_results
         save_experiment_results(
@@ -101,13 +108,15 @@ def train_model(
             test_auprc=test_auprc,
             best_val_auc=best_val_auc,
             epochs_trained=best_epoch + 1,
-            best_model_path=best_model_path
+            best_model_path=best_model_path,
+            training_time_seconds=training_time_seconds,
+            training_time_minutes=training_time_minutes
         )
 
     return best_val_auc, best_model_path, test_auc, test_auprc, best_epoch
 
 
-
+# ====================== evaluate_model 函數（必須保留！） ======================
 def evaluate_model(
     model: nn.Module,
     x: torch.Tensor,

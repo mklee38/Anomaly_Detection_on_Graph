@@ -12,14 +12,7 @@ from typing import Optional
 def create_experiment(cfg, description: Optional[str] = None) -> str:
     """
     Create a new experiment folder and save experiment config as config.yaml.
-    
-    Args:
-        cfg: Config object containing all experiment parameters
-        description (str, optional): Description of the experiment. 
-                                     If None, a default description will be used.
-    
-    Returns:
-        str: Path to the created experiment directory
+    自動根據 model_name 產生正確的 aggregator / heads 欄位。
     """
     # Create experiment directory
     exp_dir = f"../experiments/{cfg.exp_name}"
@@ -28,11 +21,31 @@ def create_experiment(cfg, description: Optional[str] = None) -> str:
     print(f"本次實驗名稱：{cfg.exp_name}")
     print(f"實驗資料夾：{exp_dir}")
 
-    # Default description if not provided
+    # Default description
     if description is None:
-        description = "GraphSAGE baseline with temporal split"
+        description = "Graph Anomaly Detection experiment"
 
-    # Build config dictionary for saving
+    # ====================== 自動生成 model config ======================
+    model_name = getattr(cfg, "model_name", "GraphSAGE").upper()
+
+    model_dict = {
+        "name": model_name,
+        "hidden_dim": int(getattr(cfg, "hidden_dim", 128)),
+        "num_layers": int(getattr(cfg, "num_layers", 3)),
+        "dropout": float(getattr(cfg, "dropout", 0.4))
+    }
+
+    if model_name == "GRAPHSAGE":
+        model_dict["aggregator"] = getattr(cfg, "aggregator", "mean")
+        model_dict["heads"] = None
+    elif model_name == "GAT":
+        model_dict["aggregator"] = None
+        model_dict["heads"] = getattr(cfg, "heads", 8)
+    else:
+        model_dict["aggregator"] = getattr(cfg, "aggregator", None)
+        model_dict["heads"] = getattr(cfg, "heads", None)
+
+    # ====================== 完整的 config_dict ======================
     config_dict = {
         "experiment": {
             "name": cfg.exp_name,
@@ -40,22 +53,19 @@ def create_experiment(cfg, description: Optional[str] = None) -> str:
             "date": datetime.now().strftime("%Y-%m-%d %H:%M"),
             "timestamp": datetime.now().strftime("%Y%m%d_%H%M%S")
         },
-        "model": {
-            "name": getattr(cfg, "model_name", "GraphSAGE"),
-            "hidden_dim": int(getattr(cfg, "hidden_dim", 128)),
-            "num_layers": int(getattr(cfg, "num_layers", 2)),
-            "aggregator": getattr(cfg, "aggregator", "mean"),
-            "dropout": float(getattr(cfg, "dropout", 0.2))
-        },
+        "model": model_dict,
         "training": {
             "lr": float(getattr(cfg, "lr", 0.01)),
-            "epochs": int(getattr(cfg, "epochs", 100)),
-            "patience": int(getattr(cfg, "patience", 5)),
+            "epochs": int(getattr(cfg, "epochs", 300)),
+            "patience": int(getattr(cfg, "patience", 25)),
             "weight_decay": float(getattr(cfg, "weight_decay", 5e-4))
         },
         "data": {
             "use_degree": bool(getattr(cfg, "use_degree", False)),
             "use_pagerank": bool(getattr(cfg, "use_pagerank", False)),
+            "use_clustering": bool(getattr(cfg, "use_clustering", False)),
+            "use_eigenvector": bool(getattr(cfg, "use_eigenvector", False)),
+            "use_betweenness": bool(getattr(cfg, "use_betweenness", False)),
             "split": "temporal"
         }
     }
@@ -100,19 +110,12 @@ def save_experiment_results(
     test_auprc: float,
     best_val_auc: float,
     epochs_trained: int,
-    best_model_path: Optional[str] = None
+    best_model_path: Optional[str] = None,
+    training_time_seconds: float = 0.0,      # ← 新增
+    training_time_minutes: float = 0.0       # ← 新增
 ) -> None:
     """
-    Save experiment results to results.json and copy the best model to the experiment folder.
-    
-    Args:
-        cfg: Config object
-        exp_dir (str): Path to the experiment directory
-        test_auc (float): Test AUC score
-        test_auprc (float): Test AUPRC score
-        best_val_auc (float): Best validation AUC
-        epochs_trained (int): Number of epochs trained
-        best_model_path (str, optional): Path to the best model saved during training
+    Save experiment results to results.json with training time.
     """
     # 1. Prepare results dictionary
     results: Dict[str, Any] = {
@@ -121,6 +124,8 @@ def save_experiment_results(
         "test_auprc": float(test_auprc),
         "best_val_auc": float(best_val_auc),
         "epochs_trained": epochs_trained,
+        "training_time_seconds": round(training_time_seconds, 2),      # ← 新增
+        "training_time_minutes": round(training_time_minutes, 2),      # ← 新增
         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     }
 
@@ -129,7 +134,7 @@ def save_experiment_results(
     with open(results_path, "w", encoding="utf-8") as f:
         json.dump(results, f, indent=4, ensure_ascii=False)
 
-    print(f"results.json 已儲存至: {results_path}")
+    print(f"results.json 已儲存至: {results_path} (包含訓練時間紀錄)")
 
     # 2. Copy best model to experiment folder
     saved_dir = "../saved_models"
