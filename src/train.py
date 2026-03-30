@@ -88,15 +88,28 @@ def train_pipeline_graphsage(
     start_time = time.time()
     print(f" Training started at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
 
+    # ====================== 【新增】Concat 原始 features + GNN embeddings ======================
     model.eval()
     with torch.no_grad():
-        embeddings = model.get_embeddings(x, edge_index).cpu().numpy()
+        embeddings = model.get_embeddings(x, edge_index).cpu().numpy()   # GNN embeddings
 
-    X_train = embeddings[train_idx.cpu().numpy()]
+    # 原始 node features（x 裡面本來就有的 167 維）
+    original_features = x.cpu().numpy()
+
+    # 是否要 concat（未來可以加到 config 裡當成開關）
+    if getattr(cfg, "concat_features", True):          # 預設開啟
+        X_all = np.hstack([original_features, embeddings])
+        print(f" 已 concat 原始 features + GNN embeddings → 新 dimension = {X_all.shape[1]}")
+    else:
+        X_all = embeddings
+        print("只使用 GNN embeddings（未 concat 原始 features）")
+
+    # 切 train/val/test
+    X_train = X_all[train_idx.cpu().numpy()]
     y_train = y[train_idx].cpu().numpy()
-    X_val   = embeddings[val_idx.cpu().numpy()]
+    X_val   = X_all[val_idx.cpu().numpy()]
     y_val   = y[val_idx].cpu().numpy()
-    X_test  = embeddings[test_idx.cpu().numpy()]
+    X_test  = X_all[test_idx.cpu().numpy()]
     y_test  = y[test_idx].cpu().numpy()
 
     dtrain = xgb.DMatrix(X_train, label=y_train)
