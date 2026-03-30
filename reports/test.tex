@@ -1,0 +1,38 @@
+\begin{table}[htbp]
+\centering
+\caption{GraphSAGE Pipeline vs End-to-End Performance Comparison (Temporal Split)}
+\label{tab:results_pipeline}
+\begin{tabular}{l l c c c c}
+\hline
+\textbf{Exp.} & \textbf{Model Variant} & \textbf{Type} & \textbf{Test AUC} & \textbf{Test AUPRC} & \textbf{Key Features} \\
+\hline
+013 & Baseline Pipeline (no concat) & Pipeline & 0.7412 & 0.2140 & Degree + PageRank \\
+014 & GraphSAGE + XGBoost (concat) & Pipeline & 0.9321 & 0.7985 & Degree + PageRank + Concat \\
+\textbf{015} & \textbf{GraphSAGE + XGBoost (best)} & \textbf{Pipeline} & \textbf{0.9396} & \textbf{0.7990} & \textbf{Degree + PageRank + Eigenvector + Concat} \\
+016 & GraphSAGE + XGBoost (full) & Pipeline & 0.9316 & 0.7933 & Degree + PageRank + Clustering + Eigenvector + Concat \\
+017 & GraphSAGE + XGBoost (repeat) & Pipeline & 0.9341 & 0.7985 & Degree + PageRank + Eigenvector + Concat \\
+018 & GraphSAGE (End-to-End) & End-to-End & 0.9283 & 0.7271 & Degree + PageRank + Concat \\
+\hline
+\end{tabular}
+\vspace{0.5em}
+\footnotesize{Note: All experiments use temporal split (train: 1-34, test: 35-49).}
+\end{table}
+
+
+\begin{table}[htbp]
+\centering
+\caption{GraphSAGE Pipeline vs End-to-End Performance Comparison (Temporal Split)}
+\label{tab:results_pipeline}
+\begin{tabular}{l l c c c}
+\hline
+\textbf{Model Variant} & \textbf{Features} & \textbf{Mode} & \textbf{Test AUC} & \textbf{Test AUPRC} \\
+\hline
+GraphSAGE & Degree + PageRank & End-to-End & 0.9283 & 0.7271 \\
+GraphSAGE + XGBoost & Degree + PageRank & Pipeline & 0.9321 & 0.7985 \\
+\textbf{GraphSAGE + XGBoost (concat)} & \textbf{Degree + PageRank} & \textbf{Pipeline} & \textbf{0.9321} & \textbf{0.7985} \\
+\textbf{GraphSAGE + XGBoost (Best)} & \textbf{Degree + PageRank + Eigenvector} & \textbf{Pipeline} & \textbf{0.9396} & \textbf{0.7990} \\
+\hline
+\end{tabular}
+\vspace{0.5em}
+\footnotesize{Note: All experiments use temporal split (train: time steps 1--34, test: 35--49).}
+\end{table}
