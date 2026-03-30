@@ -111,11 +111,15 @@ def save_experiment_results(
     best_val_auc: float,
     epochs_trained: int,
     best_model_path: Optional[str] = None,
-    training_time_seconds: float = 0.0,      # ← 新增
-    training_time_minutes: float = 0.0       # ← 新增
+    training_time_seconds: float = 0.0,      
+    training_time_minutes: float = 0.0,       
+    best_epoch: int = 0,                          
+    patience_used_after_best: int = 0
+    
 ) -> None:
     """
-    Save experiment results to results.json with training time.
+    Save experiment results to results.json（同時支援 end-to-end 和 Pipeline）
+    已加入 best_epoch 和 patience_used_after_best，讓 pipeline 也能正常記錄
     """
     # 1. Prepare results dictionary
     results: Dict[str, Any] = {
@@ -124,8 +128,8 @@ def save_experiment_results(
         "test_auprc": float(test_auprc),
         "best_val_auc": float(best_val_auc),
         "epochs_trained": epochs_trained,
-        "training_time_seconds": round(training_time_seconds, 2),      # ← 新增
-        "training_time_minutes": round(training_time_minutes, 2),      # ← 新增
+        "training_time_seconds": round(training_time_seconds, 2),      
+        "training_time_minutes": round(training_time_minutes, 2),      
         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     }
 
@@ -140,7 +144,6 @@ def save_experiment_results(
     saved_dir = "../saved_models"
     copied = False
 
-    # Try to copy from the path returned by train_model (most reliable)
     if best_model_path and os.path.exists(best_model_path):
         shutil.copy(best_model_path, f"{exp_dir}/model_best.pt")
         print(f"已複製最佳模型 → {exp_dir}/model_best.pt")
@@ -162,7 +165,6 @@ def save_experiment_results(
                 print(f"已複製最新模型 {latest_model} → {exp_dir}/model_best.pt")
                 copied = True
 
-    # Final fallback
     if not copied:
         fallback = os.path.join(saved_dir, "graphsage_best.pt")
         if os.path.exists(fallback):

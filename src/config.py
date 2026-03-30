@@ -19,6 +19,9 @@ class Config:
 
     # 實驗名稱 (用來存實驗結果的資料夾名稱，會在 experiments/ 下自動建立)
     exp_name: str = "exp_001_baseline"          # Experiment Name
+
+    # End-to-end vs Pipeline
+    use_pipeline: bool = False          # ← False = end-to-end, True = Pipeline (GNN → XGBoost)
    
     # 模型與訓練
     random_seed: int = 42                

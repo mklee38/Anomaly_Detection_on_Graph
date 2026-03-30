@@ -1,4 +1,4 @@
-# ====================== Improved GraphSAGE with Kaiming Initialization + Residual Connections ======================   
+# ====================== Improved GraphSAGE with Kaiming Initialization + Residual Connections + Pipeline Support ======================   
 import torch
 import torch.nn as nn
 import torch.nn.init as init
@@ -6,8 +6,8 @@ from torch_geometric.nn import SAGEConv
 
 class ImprovedGraphSAGE(nn.Module):
     """
-    Improved GraphSAGE with Residual Connections for Graph Anomaly Detection on Elliptic dataset.
-    新增：Kaiming initialization + Residual (Skip) Connections
+    Improved GraphSAGE for Graph Anomaly Detection on Elliptic dataset.
+    新增：Kaiming initialization + Residual Connections + get_embeddings()（專為 Pipeline 設計）
     """
 
     def __init__(
@@ -43,7 +43,7 @@ class ImprovedGraphSAGE(nn.Module):
             )
 
         self.dropout = nn.Dropout(dropout)
-        self.lin = nn.Linear(hidden_dim, 2)   # Binary classification
+        self.lin = nn.Linear(hidden_dim, 2)   # 僅供 end-to-end 使用
 
         # ========== Kaiming Initialization ==========
         self._initialize_weights()
@@ -69,26 +69,43 @@ class ImprovedGraphSAGE(nn.Module):
               f"(layers={self.num_layers}, hidden={self.hidden_dim})")
 
     def forward(self, x: torch.Tensor, edge_index: torch.Tensor) -> torch.Tensor:
-        """
-        Forward pass with Residual Connections + Layer Normalization
-        """
-        # First layer (no residual, dimension may differ)
+        """End-to-end forward pass"""
         x = self.convs[0](x, edge_index).relu()
         x = self.dropout(x)
 
-        # Subsequent layers with residual + LayerNorm
         for conv in self.convs[1:]:
             residual = x
-            
             x = conv(x, edge_index)
-            x = x + residual                    # Residual
-            x = nn.functional.layer_norm(x, x.shape[1:])  # LayerNorm (重要！)
+            x = x + residual
+            x = nn.functional.layer_norm(x, x.shape[1:])
             x = x.relu()
             x = self.dropout(x)
 
         x = self.dropout(x)
         x = self.lin(x)
         return x
+
+    # ====================== 【關鍵】Pipeline 專用 Embedding 抽取 ======================
+    def get_embeddings(self, x: torch.Tensor, edge_index: torch.Tensor) -> torch.Tensor:
+        """
+        回傳 GNN 最後一層的 hidden representation（不經過 classifier）
+        → 這就是論文 GraphSAGE Pipeline 所需要的 node embeddings
+        """
+        # First layer
+        x = self.convs[0](x, edge_index).relu()
+        x = self.dropout(x)
+
+        # Middle + last layers with residual + LayerNorm
+        for conv in self.convs[1:]:
+            residual = x
+            x = conv(x, edge_index)
+            if x.shape == residual.shape:
+                x = x + residual
+            x = nn.functional.layer_norm(x, x.shape[1:])
+            x = x.relu()
+            x = self.dropout(x)
+
+        return x   # ← 這一行非常重要！
 
     def __repr__(self):
         return (f"ImprovedGraphSAGE("
@@ -97,7 +114,7 @@ class ImprovedGraphSAGE(nn.Module):
                 f"layers={self.num_layers}, "
                 f"agg={self.aggregator}, "
                 f"dropout={self.dropout_rate}, "
-                f"init=Kaiming+Residual)")
+                f"init=Kaiming+Residual+Pipeline)")
     
 
 # ====================== Improved GAT with Kaiming Initialization + Residual Connections ======================
