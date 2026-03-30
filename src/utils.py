@@ -1,7 +1,5 @@
 # src/create.py
 
-
-
 # ====================== Experiment Creation ======================
 
 import yaml
@@ -24,6 +22,9 @@ def create_experiment(cfg, description: Optional[str] = None) -> str:
     # Default description
     if description is None:
         description = "Graph Anomaly Detection experiment"
+
+
+        
 
     # ====================== 自動生成 model config ======================
     model_name = getattr(cfg, "model_name", "GraphSAGE").upper()
@@ -108,6 +109,8 @@ def save_experiment_results(
     exp_dir: str,
     test_auc: float,
     test_auprc: float,
+    test_f1: float,          # ← 新增
+    test_mcc: float,         # ← 新增
     best_val_auc: float,
     epochs_trained: int,
     best_model_path: Optional[str] = None,
@@ -115,7 +118,6 @@ def save_experiment_results(
     training_time_minutes: float = 0.0,       
     best_epoch: int = 0,                          
     patience_used_after_best: int = 0
-    
 ) -> None:
     """
     Save experiment results to results.json（同時支援 end-to-end 和 Pipeline）
@@ -126,6 +128,8 @@ def save_experiment_results(
         "experiment": cfg.exp_name,
         "test_auc": float(test_auc),
         "test_auprc": float(test_auprc),
+        "test_f1": float(test_f1),           # ← 新增
+        "test_mcc": float(test_mcc),         # ← 新增
         "best_val_auc": float(best_val_auc),
         "epochs_trained": epochs_trained,
         "training_time_seconds": round(training_time_seconds, 2),      
