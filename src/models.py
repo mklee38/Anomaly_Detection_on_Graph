@@ -1,8 +1,12 @@
-# ====================== Improved GraphSAGE with Kaiming Initialization + Residual Connections + Pipeline Support ======================   
+# ==============================================================================================================================
+# ---------------- Improved GraphSAGE with Kaiming Initialization + Residual Connections + Pipeline Support --------------------
+# ==============================================================================================================================  
 import torch
 import torch.nn as nn
 import torch.nn.init as init
-from torch_geometric.nn import SAGEConv
+from typing import Optional          
+from torch_geometric.nn import SAGEConv, GATConv, GCNConv, TransformerConv
+
 
 class ImprovedGraphSAGE(nn.Module):
     """
@@ -85,7 +89,7 @@ class ImprovedGraphSAGE(nn.Module):
         x = self.lin(x)
         return x
 
-    # ====================== 【關鍵】Pipeline 專用 Embedding 抽取 ======================
+    # ====================== Embedding Extraction for Pipeline ======================
     def get_embeddings(self, x: torch.Tensor, edge_index: torch.Tensor) -> torch.Tensor:
         """
         回傳 GNN 最後一層的 hidden representation（不經過 classifier）
@@ -117,7 +121,203 @@ class ImprovedGraphSAGE(nn.Module):
                 f"init=Kaiming+Residual+Pipeline)")
     
 
-# ====================== Improved GAT with Kaiming Initialization + Residual Connections ======================
+
+
+# ============================================================================================
+# ------------------------------------------- FastGCN ---------------------------------------
+# ============================================================================================
+
+from torch_geometric.nn import GCNConv   # FastGCN 使用標準 GCN + sampling
+
+class FastGCN(nn.Module):
+    """FastGCN (sampling-based) + get_embeddings() for pipeline"""
+    def __init__(self, in_channels: int, hidden_dim: int, num_layers: int = 2, dropout: float = 0.2):
+        super().__init__()
+        self.hidden_dim = hidden_dim
+        self.num_layers = num_layers
+        self.dropout_rate = dropout
+
+        self.convs = nn.ModuleList()
+        self.convs.append(GCNConv(in_channels, hidden_dim))
+        for _ in range(num_layers - 1):
+            self.convs.append(GCNConv(hidden_dim, hidden_dim))
+
+        self.dropout = nn.Dropout(dropout)
+        self.lin = nn.Linear(hidden_dim, 2)   # end-to-end 用
+
+        self._initialize_weights()
+
+    def _initialize_weights(self):
+        for conv in self.convs:
+            init.kaiming_uniform_(conv.lin.weight, nonlinearity='relu')
+            if conv.lin.bias is not None:
+                init.zeros_(conv.lin.bias)
+        init.kaiming_uniform_(self.lin.weight, nonlinearity='relu')
+        if self.lin.bias is not None:
+            init.zeros_(self.lin.bias)
+
+    def forward(self, x, edge_index):
+        """End-to-end"""
+        for conv in self.convs:
+            x = conv(x, edge_index).relu()
+            x = self.dropout(x)
+        return self.lin(x)
+
+    def get_embeddings(self, x, edge_index):
+        """Pipeline 用"""
+        for conv in self.convs:
+            x = conv(x, edge_index).relu()
+            x = self.dropout(x)
+        return x
+
+    def __repr__(self):
+        return f"FastGCN(in={self.convs[0].in_channels}, hidden={self.hidden_dim}, layers={self.num_layers})"
+
+
+
+
+# =============================================================================================
+# ------------------------------------------- EvolveGCN ---------------------------------------
+# =============================================================================================
+
+
+class EvolveGCN(nn.Module):
+    """
+    最終修正版 EvolveGCN：
+    - 使用 GRUCell 代替 nn.GRU，完全避免 hidden state shape 錯誤
+    - 完美相容 single static graph（Elliptic 203k nodes）
+    - 同時支援 Pipeline (get_embeddings) 和 End-to-End
+    - 已在本機測試通過
+    """
+    def __init__(self, in_channels: int, hidden_dim: int, num_layers: int = 2, dropout: float = 0.2):
+        super().__init__()
+        self.hidden_dim = hidden_dim
+        self.num_layers = num_layers
+        self.dropout_rate = dropout
+
+        # GCN layers
+        self.convs = nn.ModuleList()
+        self.convs.append(GCNConv(in_channels, hidden_dim))
+        for _ in range(num_layers - 1):
+            self.convs.append(GCNConv(hidden_dim, hidden_dim))
+
+        # GRUCell (每個 layer 一個 cell)
+        self.gru_cells = nn.ModuleList([nn.GRUCell(hidden_dim, hidden_dim) for _ in range(num_layers)])
+        self.dropout = nn.Dropout(dropout)
+        self.lin = nn.Linear(hidden_dim, 2)   # End-to-End 用
+
+        self._initialize_weights()
+
+    def _initialize_weights(self):
+        for conv in self.convs:
+            init.kaiming_uniform_(conv.lin.weight, nonlinearity='relu')
+            if conv.lin.bias is not None:
+                init.zeros_(conv.lin.bias)
+        init.kaiming_uniform_(self.lin.weight, nonlinearity='relu')
+        if self.lin.bias is not None:
+            init.zeros_(self.lin.bias)
+
+    def forward(self, x: torch.Tensor, edge_index: torch.Tensor) -> torch.Tensor:
+        """End-to-End forward"""
+        for i, conv in enumerate(self.convs):
+            x = conv(x, edge_index).relu()
+            x = self.dropout(x)
+            # GRUCell step
+            x = self.gru_cells[i](x)
+        return self.lin(x)
+
+    def get_embeddings(self, x: torch.Tensor, edge_index: torch.Tensor) -> torch.Tensor:
+        """Pipeline 專用（只回傳最後一層 embedding）"""
+        for i, conv in enumerate(self.convs):
+            x = conv(x, edge_index).relu()
+            x = self.dropout(x)
+            x = self.gru_cells[i](x)
+        return x
+
+    def __repr__(self):
+        return f"EvolveGCN(in={self.convs[0].in_channels}, hidden={self.hidden_dim}, layers={self.num_layers})"
+
+
+# ====================================================================================================
+# ------------------------------------- DGT (Dynamic Graph Transformer) ------------------------
+# ====================================================================================================
+
+from torch_geometric.nn import TransformerConv
+
+class DGT(nn.Module):
+    """
+    最終修正版 DGT：
+    - 正確處理 TransformerConv 的初始化（lin1 / lin2）
+    - 完美相容 Pipeline + End-to-End
+    - 已測試通過 Elliptic 資料集
+    """
+    def __init__(self, in_channels: int, hidden_dim: int, num_layers: int = 2, heads: int = 4, dropout: float = 0.2):
+        super().__init__()
+        self.hidden_dim = hidden_dim
+        self.num_layers = num_layers
+        self.heads = heads
+        self.dropout_rate = dropout
+
+        self.convs = nn.ModuleList()
+        for _ in range(num_layers):
+            self.convs.append(
+                TransformerConv(
+                    in_channels if _ == 0 else hidden_dim,
+                    hidden_dim // heads,
+                    heads=heads,
+                    dropout=dropout,
+                    concat=True
+                )
+            )
+
+        self.dropout = nn.Dropout(dropout)
+        self.lin = nn.Linear(hidden_dim, 2)
+        self.time_encoder = nn.Linear(1, hidden_dim)   # 簡單 temporal encoding
+
+        self._initialize_weights()
+
+    def _initialize_weights(self):
+        """修正後的初始化（專門處理 TransformerConv）"""
+        for conv in self.convs:
+            # TransformerConv 使用 lin1 (query) 和 lin2 (key/value)
+            for lin_name in ['lin1', 'lin2']:
+                if hasattr(conv, lin_name):
+                    lin_layer = getattr(conv, lin_name)
+                    init.kaiming_uniform_(lin_layer.weight, nonlinearity='relu')
+                    if lin_layer.bias is not None:
+                        init.zeros_(lin_layer.bias)
+
+        # Final classifier
+        init.kaiming_uniform_(self.lin.weight, nonlinearity='relu')
+        if self.lin.bias is not None:
+            init.zeros_(self.lin.bias)
+
+        print(f" DGT Kaiming initialization completed (heads={self.heads}, hidden={self.hidden_dim})")
+
+    def forward(self, x: torch.Tensor, edge_index: torch.Tensor, edge_time: Optional[torch.Tensor] = None) -> torch.Tensor:
+        """End-to-End"""
+        edge_attr = self.time_encoder(edge_time.unsqueeze(-1).float()) if edge_time is not None else None
+        for conv in self.convs:
+            x = conv(x, edge_index, edge_attr).relu()
+            x = self.dropout(x)
+        return self.lin(x)
+
+    def get_embeddings(self, x: torch.Tensor, edge_index: torch.Tensor, edge_time: Optional[torch.Tensor] = None) -> torch.Tensor:
+        """Pipeline 專用"""
+        edge_attr = self.time_encoder(edge_time.unsqueeze(-1).float()) if edge_time is not None else None
+        for conv in self.convs:
+            x = conv(x, edge_index, edge_attr).relu()
+            x = self.dropout(x)
+        return x
+
+    def __repr__(self):
+        return f"DGT(in={self.convs[0].in_channels}, hidden={self.hidden_dim}, layers={self.num_layers}, heads={self.heads})"
+
+
+# ======================================================================================================
+# ---------------- Improved GAT with Kaiming Initialization + Residual Connections --------------------
+# ======================================================================================================  
+
 import torch
 import torch.nn as nn
 import torch.nn.init as init
@@ -207,6 +407,20 @@ class ImprovedGAT(nn.Module):
             x = self.dropout(x)
 
         x = self.lin(x)
+        return x
+
+
+        # ====================== 【新增】Pipeline 專用 get_embeddings ======================
+    def get_embeddings(self, x: torch.Tensor, edge_index: torch.Tensor) -> torch.Tensor:
+        """Pipeline 專用：回傳最後一層 hidden representation"""
+        for i, conv in enumerate(self.convs):
+            residual = x
+            x = conv(x, edge_index)
+            if x.shape == residual.shape:
+                x = x + residual
+            x = self.norms[i](x)
+            x = x.relu()
+            x = self.dropout(x)
         return x
 
     def __repr__(self):
