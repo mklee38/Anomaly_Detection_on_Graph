@@ -1,4 +1,5 @@
 # src/evaluate.py
+# used in train.py and 04_evaluation.ipynb
 
 import torch
 import torch.nn.functional as F
