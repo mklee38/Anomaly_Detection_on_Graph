@@ -1,4 +1,5 @@
 # src/utils.py
+from torch_geometric.graphgym import cfg
 import yaml
 import os
 import json
@@ -9,6 +10,22 @@ from typing import Dict, Any, Optional
 import pandas as pd
 from pathlib import Path
 import torch   # 用來判斷 class_weights 是否為 tensor
+
+# ====================== 自動偵測專案根目錄（支援 notebook + .py） ======================
+def get_project_root() -> str:
+    """自動向上尋找專案根目錄（不管從 notebooks/ 還是根目錄執行都正確）"""
+    current = os.path.abspath(".")
+    for _ in range(6):  # 最多往上找 6 層
+        if os.path.exists(os.path.join(current, "data", "raw")) or \
+           os.path.exists(os.path.join(current, "README.md")) or \
+           os.path.exists(os.path.join(current, "src")):
+            return current
+        parent = os.path.dirname(current)
+        if parent == current:
+            break
+        current = parent
+    # fallback
+    return os.path.abspath(".")
 
 
 # ====================== Reproducibility ======================
@@ -31,12 +48,18 @@ def set_seed(seed: int = 42):
 
 
 # ====================== Experiment Creation ======================
+
 def create_experiment(cfg, description: Optional[str] = None) -> str:
-    exp_dir = f"../experiments/{cfg.exp_name}"
+    """建立實驗資料夾並儲存 config.yaml（已完美支援 notebook + .py）"""
+    
+    project_root = get_project_root()                    # ← 關鍵：使用自動偵測函數
+    exp_dir = os.path.join(project_root, "experiments", cfg.exp_name)
+    
     os.makedirs(exp_dir, exist_ok=True)
 
     print(f"本次實驗名稱：{cfg.exp_name}")
-    print(f"實驗資料夾：{exp_dir}")
+    print(f"實驗資料夾（絕對路徑）：{exp_dir}")
+    print(f"專案根目錄偵測為：{project_root}")   # ← 方便 debug
 
     if description is None:
         description = "Graph Anomaly Detection experiment"
@@ -90,13 +113,13 @@ def create_experiment(cfg, description: Optional[str] = None) -> str:
         }
     }
 
-    config_path = f"{exp_dir}/config.yaml"
+    config_path = os.path.join(exp_dir, "config.yaml")
     with open(config_path, "w", encoding="utf-8") as f:
         yaml.dump(config_dict, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
 
     print("config.yaml 已自動建立")
     print(f"實驗設定已儲存至: {config_path}")
-    print(f"Training Mode: {training_mode}")
+    print(f"Training Mode: {training_mode}\n")
 
     return exp_dir
 
@@ -157,7 +180,7 @@ def save_experiment_results(
 def print_experiment_summary(exp_dir: str, cfg) -> None:
     mode = "Pipeline (GNN → XGBoost)" if getattr(cfg, "use_pipeline", False) else "End-to-End"
     
-    print(f"\n✅ 實驗 [{cfg.exp_name}] 訓練完成！")
+    print(f"\n 實驗 [{cfg.exp_name}] 訓練完成！")
     print(f"   Training Mode : {mode}")
     print(f"   實驗路徑      : {exp_dir}")
     print(f"   已自動記錄到總表 : ../experiments/experiments_summary.csv")
@@ -167,43 +190,36 @@ def print_experiment_summary(exp_dir: str, cfg) -> None:
 
 # ====================== Log to Central CSV ======================
 def log_experiment_to_csv(exp_dir: str, cfg, class_weights: list = None) -> None:
-    """記錄實驗到 experiments_summary.csv"""
-    summary_path = Path("../experiments/experiments_summary.csv")
-    summary_path.parent.mkdir(exist_ok=True)
+    """記錄實驗到 experiments_summary.csv（支援 notebook + .py）"""
+    project_root = get_project_root()
+    summary_path = os.path.join(project_root, "experiments", "experiments_summary.csv")
+    
+    print(f" [CSV Debug] Project root detected: {project_root}")
+    print(f" [CSV Debug] Writing to: {summary_path}")
+    os.makedirs(os.path.dirname(summary_path), exist_ok=True)
 
-    results_path = Path(exp_dir) / "results.json"
-    config_path = Path(exp_dir) / "config.yaml"
+    results_path = os.path.join(exp_dir, "results.json")
+    config_path = os.path.join(exp_dir, "config.yaml")
 
-    if not results_path.exists() or not config_path.exists():
-        print("⚠️ 警告：找不到 results.json 或 config.yaml")
+    if not os.path.exists(results_path) or not os.path.exists(config_path):
+        print(" 警告：找不到 results.json 或 config.yaml，跳過 CSV 記錄")
         return
 
     with open(results_path, encoding="utf-8") as f:
         results = json.load(f)
-
     with open(config_path, encoding="utf-8") as f:
         config = yaml.safe_load(f)
 
-   
-    # ====================== exp_no: 更彈性提取數字 ======================
+    # exp_no
     exp_name = getattr(cfg, "exp_name", "exp_001").strip()
-
     import re
-    # 匹配 exp1234 或 exp_1234 或 EXP_005 等格式
     match = re.search(r'exp[_]?(\d+)', exp_name, re.IGNORECASE)
-    if match:
-        exp_no = match.group(1)          # 直接取出數字，不補零
-    else:
-        exp_no = "XXX"                   # 無法解析時的預設值
+    exp_no = match.group(1) if match else "XXX"
 
     training_mode = "Pipeline" if getattr(cfg, "use_pipeline", False) else "End-to-End"
 
-    if class_weights is not None:
-        cw_str = str(class_weights.cpu().tolist() if torch.is_tensor(class_weights) else class_weights)
-    else:
-        cw_str = "[1.0, 15.0]"
+    cw_str = str(class_weights.cpu().tolist() if torch.is_tensor(class_weights) else (class_weights or [1.0, 15.0]))
 
-    # ====================== 準備記錄資料 ======================
     record = {
         "exp_no": exp_no,
         "exp_name": exp_name,
@@ -233,22 +249,21 @@ def log_experiment_to_csv(exp_dir: str, cfg, class_weights: list = None) -> None
 
     df_new = pd.DataFrame([record])
 
-    if summary_path.exists():
+    if os.path.exists(summary_path):
         df_existing = pd.read_csv(summary_path)
         df_combined = pd.concat([df_existing, df_new], ignore_index=True)
     else:
         df_combined = df_new
 
-    # 強制欄位順序 + 確保分數顯示 4 位小數（儲存時保持 float，pandas 會正確顯示）
     desired_columns = [
         "exp_no", "exp_name", "timestamp", "training_mode", "model_name",
-        "t_auc", "t_auprc", "t_f1", "t_mcc",
-        "hidden_d", "num_lay", "lr", "epoch", "patience", "dropout", "aggr",
-        "deg", "pr", "clu", "eig", "bet",
+        "t_auc", "t_auprc", "t_f1", "t_mcc", "hidden_d", "num_lay", "lr", 
+        "epoch", "patience", "dropout", "aggr", "deg", "pr", "clu", "eig", "bet",
         "early_stop", "time(s)", "class_weight"
     ]
     
     df_combined = df_combined[desired_columns]
     df_combined.to_csv(summary_path, index=False)
     
-    print(f"✅ 已記錄到 experiments_summary.csv | 實驗編號: {exp_no} | 總數: {len(df_combined)}")
+    print(f" [CSV Debug] 記錄成功！實驗 {exp_no} 已加入 | 目前總筆數: {len(df_combined)}")
+    print(f" experiments_summary.csv 已儲存至: {summary_path}\n")
