@@ -1,3 +1,4 @@
+# src/train.py
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -9,12 +10,12 @@ import xgboost as xgb
 import numpy as np
 from typing import Tuple, Optional
 
-# 正確 import（使用 evaluate.py）
+# 正確 import
 from src.evaluate import evaluate_model, evaluate_xgboost
-from sklearn.metrics import roc_auc_score   # ← 只留這個給 validation loop 使用
+from sklearn.metrics import roc_auc_score
 
 
-# ====================== 原有 End-to-End 訓練函數（已完整修正） ======================
+# ====================== End-to-End 訓練函數（保持不變） ======================
 def train_model(
     model: nn.Module,
     x: torch.Tensor,
@@ -30,7 +31,7 @@ def train_model(
     save_dir: str = "../saved_models"
 ) -> Tuple[float, Optional[str], float, float, int]:
     """
-    原有的 End-to-End 訓練函數（已補齊 save + return）
+    End-to-End 訓練（GNN + Weighted CrossEntropy）
     """
     optimizer = Adam(model.parameters(), lr=cfg.lr)
     
@@ -45,7 +46,6 @@ def train_model(
     patience_counter = 0
     best_model_state = None
     best_epoch = 0
-    best_epoch_patience_counter = 0
 
     start_time = time.time()
     print(f" Training started at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
@@ -72,23 +72,20 @@ def train_model(
                     best_val_auc = val_auc
                     best_epoch = epoch
                     patience_counter = 0
-                    best_epoch_patience_counter = 0
                     best_model_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
                 else:
                     patience_counter += 1
-                    best_epoch_patience_counter = patience_counter
                     
                     if patience_counter >= getattr(cfg, 'patience', 25):
                         print(f"Early stopping triggered at epoch {epoch}!")
                         break
 
-    end_time = time.time()
-    training_time_seconds = end_time - start_time
+    # 計算訓練時間
+    training_time_seconds = time.time() - start_time
     training_time_minutes = training_time_seconds / 60
 
     print(f"\n Training finished in {training_time_seconds:.1f} seconds ({training_time_minutes:.2f} minutes)")
     print(f"   Best model at epoch {best_epoch} (Val AUC = {best_val_auc:.4f})")
-    print(f"   Early stopping patience used after best: {best_epoch_patience_counter}")
 
     # Save best model
     best_model_path: Optional[str] = None
@@ -99,9 +96,8 @@ def train_model(
         best_model_path = f"{save_dir}/{model_prefix}_best_{ts}.pt"
         torch.save(best_model_state, best_model_path)
         print(f"Best model saved → {best_model_path}")
-    
 
-    # Final Test Evaluation（使用 evaluation.py）
+    # Final Test Evaluation
     metrics = evaluate_model(model, x, edge_index, y, test_idx)
     test_auc = metrics["auc"]
     test_auprc = metrics["auprc"]
@@ -110,24 +106,21 @@ def train_model(
 
     # Save experiment results
     if exp_dir is not None:
-        from src.utils import save_experiment_results, print_experiment_summary   # ← 同時 import summary
+        from src.utils import save_experiment_results, print_experiment_summary
         
         save_experiment_results(
             cfg=cfg, exp_dir=exp_dir,
-            test_auc=test_auc,
-            test_auprc=test_auprc,
-            test_f1=test_f1,
-            test_mcc=test_mcc,
+            test_auc=test_auc, test_auprc=test_auprc,
+            test_f1=test_f1, test_mcc=test_mcc,
             best_val_auc=best_val_auc,
             epochs_trained=best_epoch + 1,
             best_model_path=best_model_path,
             training_time_seconds=training_time_seconds,
             training_time_minutes=training_time_minutes,
             best_epoch=best_epoch,
-            patience_used_after_best=best_epoch_patience_counter
+            patience_used_after_best=patience_counter
         )
 
-    
         print_experiment_summary(exp_dir, cfg)
 
         print(f"\n Training finished!")
@@ -136,11 +129,108 @@ def train_model(
     return best_val_auc, best_model_path, test_auc, test_auprc, best_epoch
 
 
+# ====================== 統一 Pipeline 訓練函數（唯一一個！） ======================
+def _generic_pipeline(
+    model: nn.Module,
+    x: torch.Tensor,
+    edge_index: torch.Tensor,
+    y: torch.Tensor,
+    train_idx: torch.Tensor,
+    val_idx: torch.Tensor,
+    test_idx: torch.Tensor,
+    cfg,
+    exp_dir: str,
+    device: torch.device,
+    model_type: str
+) -> Tuple[float, Optional[str], float, float, int]:
+    """所有 Pipeline 模型（GraphSAGE / GAT / FastGCN / EvolveGCN / DGT）共用邏輯"""
+    print(f" Using Pipeline for {model_type} → XGBoost")
+    print(f" Training model: {getattr(cfg, 'model_name', 'Unknown')} | "
+          f"hidden_dim={cfg.hidden_dim}, layers={cfg.num_layers}, dropout={cfg.dropout}")
+
+    start_time = time.time()
+    print(f" Training started at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+
+    # 1. 取得 GNN embeddings
+    model.eval()
+    with torch.no_grad():
+        embeddings = model.get_embeddings(x, edge_index).cpu().numpy()
+
+    # 2. 是否 concat 原始特徵（非常重要！）
+    original_features = x.cpu().numpy()
+    if getattr(cfg, "concat_features", True):
+        X_all = np.hstack([original_features, embeddings])
+        print(f" 已 concat 原始 features + GNN embeddings → 新 dimension = {X_all.shape[1]}")
+    else:
+        X_all = embeddings
+
+    # 3. 切分資料
+    X_train = X_all[train_idx.cpu().numpy()]
+    y_train = y[train_idx].cpu().numpy()
+    X_val   = X_all[val_idx.cpu().numpy()]
+    y_val   = y[val_idx].cpu().numpy()
+    X_test  = X_all[test_idx.cpu().numpy()]
+    y_test  = y[test_idx].cpu().numpy()
+
+    # 4. XGBoost 訓練
+    dtrain = xgb.DMatrix(X_train, label=y_train)
+    dval   = xgb.DMatrix(X_val, label=y_val)
+    dtest  = xgb.DMatrix(X_test, label=y_test)
+
+    params = {
+        'objective': 'binary:logistic',
+        'eval_metric': 'auc',
+        'max_depth': 6,
+        'eta': 0.1,
+        'subsample': 0.8,
+        'colsample_bytree': 0.8,
+        'seed': getattr(cfg, 'random_seed', 42)
+    }
+
+    bst = xgb.train(params, dtrain, num_boost_round=500,
+                    evals=[(dtrain, 'train'), (dval, 'val')],
+                    early_stopping_rounds=50, verbose_eval=False)
+
+    # 5. 評估
+    test_pred_prob = bst.predict(dtest)
+    metrics = evaluate_xgboost(y_test, test_pred_prob)
+
+    test_auc = metrics["auc"]
+    test_auprc = metrics["auprc"]
+    test_f1 = metrics["f1"]
+    test_mcc = metrics["mcc"]
+
+    training_time_seconds = time.time() - start_time
+    training_time_minutes = training_time_seconds / 60
+
+    print(f"\n Training finished in {training_time_seconds:.1f} seconds ({training_time_minutes:.2f} minutes)")
+
+    # 6. 儲存結果
+    from src.utils import save_experiment_results, print_experiment_summary
+    
+    save_experiment_results(
+        cfg=cfg, exp_dir=exp_dir,
+        test_auc=test_auc, test_auprc=test_auprc,
+        test_f1=test_f1, test_mcc=test_mcc,
+        best_val_auc=0.0, 
+        epochs_trained=0,
+        best_model_path=None,
+        training_time_seconds=training_time_seconds,
+        training_time_minutes=training_time_minutes,
+        best_epoch=0, 
+        patience_used_after_best=0
+    )
+    
+    bst.save_model(f"{exp_dir}/xgboost_pipeline.json")
+    print_experiment_summary(exp_dir, cfg)
+
+    print(f"\n Training finished!")
+    print(f"Test AUC: {test_auc:.4f} | AUPRC: {test_auprc:.4f} | F1: {test_f1:.4f} | MCC: {test_mcc:.4f}")
+
+    return 0.0, None, test_auc, test_auprc, 0
 
 
-
-
-# ====================== 統一訓練入口 ======================
+# ====================== 統一訓練入口（大幅簡化後） ======================
 def train(
     model: nn.Module,
     x: torch.Tensor,
@@ -155,220 +245,20 @@ def train(
     save_best: bool = True,
     save_dir: str = "../saved_models"
 ):
+    """
+    統一訓練入口：根據 cfg.use_pipeline 決定使用哪種模式
+    """
+    model_name = getattr(cfg, "model_name", "GraphSAGE").upper()
+
     if getattr(cfg, "use_pipeline", False):
-        print(" 切換至 Pipeline 模式 (GNN → XGBoost)")
-        
-        model_name = getattr(cfg, "model_name", "GraphSAGE").upper()
-        
-        if model_name == "GRAPHSAGE":
-            return train_pipeline_graphsage(model, x, edge_index, y, train_idx, val_idx, test_idx, cfg, exp_dir, device)
-        elif model_name == "GAT":
-            return train_pipeline_gat(model, x, edge_index, y, train_idx, val_idx, test_idx, cfg, exp_dir, device)
-        elif model_name == "FASTGCN":
-            return train_pipeline_fastgcn(model, x, edge_index, y, train_idx, val_idx, test_idx, cfg, exp_dir, device)
-        elif model_name == "EVOLVEGCN":
-            return train_pipeline_evolvegcn(model, x, edge_index, y, train_idx, val_idx, test_idx, cfg, exp_dir, device)
-        elif model_name == "DGT":
-            return train_pipeline_dgt(model, x, edge_index, y, train_idx, val_idx, test_idx, cfg, exp_dir, device)
-        else:
-            raise ValueError(f"不支援的 Pipeline model: {model_name}")
+        print(f" 切換至 Pipeline 模式 (GNN → XGBoost) | Model: {model_name}")
+        return _generic_pipeline(
+            model, x, edge_index, y, train_idx, val_idx, test_idx, 
+            cfg, exp_dir, device, model_name
+        )
     else:
-        print(" 使用 End-to-End 模式 (GNN + CrossEntropy)")
-        return train_model(model, x, edge_index, y, train_idx, val_idx, test_idx, cfg, device, exp_dir, save_best, save_dir)
-
-
-
-
-
-
-
-# ====================== Pipeline 訓練函數（FastGCN / EvolveGCN / DGT） ======================
-
-def train_pipeline_fastgcn(model, x, edge_index, y, train_idx, val_idx, test_idx, cfg, exp_dir, device):
-    return _generic_pipeline(model, x, edge_index, y, train_idx, val_idx, test_idx, cfg, exp_dir, device, "FastGCN")
-
-def train_pipeline_evolvegcn(model, x, edge_index, y, train_idx, val_idx, test_idx, cfg, exp_dir, device):
-    return _generic_pipeline(model, x, edge_index, y, train_idx, val_idx, test_idx, cfg, exp_dir, device, "EvolveGCN")
-
-def train_pipeline_dgt(model, x, edge_index, y, train_idx, val_idx, test_idx, cfg, exp_dir, device):
-    return _generic_pipeline(model, x, edge_index, y, train_idx, val_idx, test_idx, cfg, exp_dir, device, "DGT")
-
-def train_pipeline_gat(model, x, edge_index, y, train_idx, val_idx, test_idx, cfg, exp_dir, device):
-    return _generic_pipeline(model, x, edge_index, y, train_idx, val_idx, test_idx, cfg, exp_dir, device, "GAT")
-
-def _generic_pipeline(model, x, edge_index, y, train_idx, val_idx, test_idx, cfg, exp_dir, device, model_type):
-    """共用 pipeline 邏輯"""
-    print(f" Using Pipeline for {model_type} → XGBoost")
-    # ...（與你原本的 train_pipeline_graphsage 完全一樣的程式碼，只是把 model.get_embeddings 呼叫放在這裡）
-    # 我把完整共用程式碼貼在下面（為了不讓回覆太長，你可以直接把你現有的 train_pipeline_graphsage 複製一份改名成 _generic_pipeline，然後把 model.get_embeddings(x, edge_index) 保留）
-    # 這裡省略 30 行重複程式碼，你只需要把原本的 train_pipeline_graphsage 內容複製到 _generic_pipeline 即可
-    # 最後 return 0.0, None, test_auc, test_auprc, 0
-    pass   # ← 你把原本的 train_pipeline_graphsage 內容貼到這裡，並把 model.get_embeddings 保持不變
-
-
-def train_pipeline_graphsage(
-    model: nn.Module,
-    x: torch.Tensor,
-    edge_index: torch.Tensor,
-    y: torch.Tensor,
-    train_idx: torch.Tensor,
-    val_idx: torch.Tensor,
-    test_idx: torch.Tensor,
-    cfg,
-    exp_dir: str,
-    device: torch.device
-) -> Tuple[float, Optional[str], float, float, int]:
-    """GraphSAGE Pipeline：embedding → XGBoost"""
-    print(" Using Weighted CrossEntropy Loss with weights: [1.0, 15.0]")
-    print(f" Training model: {getattr(cfg, 'model_name', 'GraphSAGE')} | "
-          f"hidden_dim={cfg.hidden_dim}, layers={cfg.num_layers}, dropout={cfg.dropout}")
-
-    start_time = time.time()
-    print(f" Training started at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-
-    # Concat features
-    model.eval()
-    with torch.no_grad():
-        embeddings = model.get_embeddings(x, edge_index).cpu().numpy()
-
-    original_features = x.cpu().numpy()
-    if getattr(cfg, "concat_features", True):
-        X_all = np.hstack([original_features, embeddings])
-        print(f" 已 concat 原始 features + GNN embeddings → 新 dimension = {X_all.shape[1]}")
-    else:
-        X_all = embeddings
-
-    X_train = X_all[train_idx.cpu().numpy()]
-    y_train = y[train_idx].cpu().numpy()
-    X_val   = X_all[val_idx.cpu().numpy()]
-    y_val   = y[val_idx].cpu().numpy()
-    X_test  = X_all[test_idx.cpu().numpy()]
-    y_test  = y[test_idx].cpu().numpy()
-
-    dtrain = xgb.DMatrix(X_train, label=y_train)
-    dval   = xgb.DMatrix(X_val, label=y_val)
-    dtest  = xgb.DMatrix(X_test, label=y_test)
-
-    params = {'objective': 'binary:logistic', 'eval_metric': 'auc',
-              'max_depth': 6, 'eta': 0.1, 'subsample': 0.8,
-              'colsample_bytree': 0.8, 'seed': getattr(cfg, 'random_seed', 42)}
-
-    bst = xgb.train(params, dtrain, num_boost_round=500,
-                    evals=[(dtrain, 'train'), (dval, 'val')],
-                    early_stopping_rounds=50, verbose_eval=False)
-
-    test_pred_prob = bst.predict(dtest)
-    metrics = evaluate_xgboost(y_test, test_pred_prob)
-
-    test_auc = metrics["auc"]
-    test_auprc = metrics["auprc"]
-    test_f1 = metrics["f1"]
-    test_mcc = metrics["mcc"]
-
-    training_time_seconds = time.time() - start_time
-    training_time_minutes = training_time_seconds / 60
-
-    print(f"\n Training finished in {training_time_seconds:.1f} seconds ({training_time_minutes:.2f} minutes)")
-    print(f"   Best model at epoch 0 (Val AUC = 0.0000)")
-    print(f"   Early stopping patience used after best: 0")
-    print(f"Best model saved → ../saved_models/graphsage_best_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pt")
-
-    from src.utils import save_experiment_results, print_experiment_summary
-    save_experiment_results(
-        cfg=cfg, exp_dir=exp_dir,
-        test_auc=test_auc, test_auprc=test_auprc,
-        test_f1=test_f1, test_mcc=test_mcc,
-        best_val_auc=0.0, epochs_trained=0,
-        best_model_path=None,
-        training_time_seconds=training_time_seconds,
-        training_time_minutes=training_time_minutes,
-        best_epoch=0, patience_used_after_best=0
-    )
-    bst.save_model(f"{exp_dir}/xgboost_pipeline.json")
-
-    print_experiment_summary(exp_dir, cfg)
-
-    print(f"\n Training finished!")
-    print(f"Test AUC: {test_auc:.4f} | AUPRC: {test_auprc:.4f} | F1: {test_f1:.4f} | MCC: {test_mcc:.4f}")
-
-    return 0.0, None, test_auc, test_auprc, 0
-
-
-# ====================== 【新增】通用 Pipeline Helper ======================
-def _generic_pipeline(model, x, edge_index, y, train_idx, val_idx, test_idx, cfg, exp_dir, device, model_type):
-    """所有 Pipeline model（GraphSAGE / FastGCN / EvolveGCN / DGT）共用邏輯"""
-    print(f" Using Pipeline for {model_type} → XGBoost")
-    print(f" Training model: {getattr(cfg, 'model_name', 'Unknown')} | "
-          f"hidden_dim={cfg.hidden_dim}, layers={cfg.num_layers}, dropout={cfg.dropout}")
-
-    start_time = time.time()
-    print(f" Training started at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-
-    # === 1. 取得 GNN embeddings（所有新 model 都有 get_embeddings 方法）===
-    model.eval()
-    with torch.no_grad():
-        embeddings = model.get_embeddings(x, edge_index).cpu().numpy()
-
-    # === 2. Concat 原始 features + embeddings（跟之前一樣）===
-    original_features = x.cpu().numpy()
-    if getattr(cfg, "concat_features", True):
-        X_all = np.hstack([original_features, embeddings])
-        print(f" 已 concat 原始 features + GNN embeddings → 新 dimension = {X_all.shape[1]}")
-    else:
-        X_all = embeddings
-
-    # === 3. 切 train/val/test ===
-    X_train = X_all[train_idx.cpu().numpy()]
-    y_train = y[train_idx].cpu().numpy()
-    X_val   = X_all[val_idx.cpu().numpy()]
-    y_val   = y[val_idx].cpu().numpy()
-    X_test  = X_all[test_idx.cpu().numpy()]
-    y_test  = y[test_idx].cpu().numpy()
-
-    # === 4. XGBoost 訓練 ===
-    dtrain = xgb.DMatrix(X_train, label=y_train)
-    dval   = xgb.DMatrix(X_val, label=y_val)
-    dtest  = xgb.DMatrix(X_test, label=y_test)
-
-    params = {'objective': 'binary:logistic', 'eval_metric': 'auc',
-              'max_depth': 6, 'eta': 0.1, 'subsample': 0.8,
-              'colsample_bytree': 0.8, 'seed': getattr(cfg, 'random_seed', 42)}
-
-    bst = xgb.train(params, dtrain, num_boost_round=500,
-                    evals=[(dtrain, 'train'), (dval, 'val')],
-                    early_stopping_rounds=50, verbose_eval=False)
-
-    # === 5. 評估 ===
-    test_pred_prob = bst.predict(dtest)
-    metrics = evaluate_xgboost(y_test, test_pred_prob)
-
-    test_auc = metrics["auc"]
-    test_auprc = metrics["auprc"]
-    test_f1 = metrics["f1"]
-    test_mcc = metrics["mcc"]
-
-    training_time_seconds = time.time() - start_time
-    training_time_minutes = training_time_seconds / 60
-
-    print(f"\n Training finished in {training_time_seconds:.1f} seconds ({training_time_minutes:.2f} minutes)")
-
-    # === 6. 儲存結果 ===
-    from src.utils import save_experiment_results, print_experiment_summary
-    save_experiment_results(
-        cfg=cfg, exp_dir=exp_dir,
-        test_auc=test_auc, test_auprc=test_auprc,
-        test_f1=test_f1, test_mcc=test_mcc,
-        best_val_auc=0.0, epochs_trained=0,
-        best_model_path=None,
-        training_time_seconds=training_time_seconds,
-        training_time_minutes=training_time_minutes,
-        best_epoch=0, patience_used_after_best=0
-    )
-    bst.save_model(f"{exp_dir}/xgboost_pipeline.json")
-
-    print_experiment_summary(exp_dir, cfg)
-
-    print(f"\n Training finished!")
-    print(f"Test AUC: {test_auc:.4f} | AUPRC: {test_auprc:.4f} | F1: {test_f1:.4f} | MCC: {test_mcc:.4f}")
-
-    return 0.0, None, test_auc, test_auprc, 0
+        print(" 使用 End-to-End 模式 (GNN + Weighted CrossEntropy)")
+        return train_model(
+            model, x, edge_index, y, train_idx, val_idx, test_idx,
+            cfg, device, exp_dir, save_best, save_dir
+        )

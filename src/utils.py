@@ -23,7 +23,9 @@ def create_experiment(cfg, description: Optional[str] = None) -> str:
     if description is None:
         description = "Graph Anomaly Detection experiment"
 
-
+    # ====================== 決定 Training Mode ======================
+    use_pipeline = getattr(cfg, "use_pipeline", False)
+    training_mode = "Pipeline" if use_pipeline else "End-to-End"
         
 
     # ====================== 自動生成 model config ======================
@@ -46,20 +48,23 @@ def create_experiment(cfg, description: Optional[str] = None) -> str:
         model_dict["aggregator"] = getattr(cfg, "aggregator", None)
         model_dict["heads"] = getattr(cfg, "heads", None)
 
-    # ====================== 完整的 config_dict ======================
+    # ====================== 完整的 config_dict（新增 training mode） ======================
     config_dict = {
         "experiment": {
             "name": cfg.exp_name,
             "description": description,
             "date": datetime.now().strftime("%Y-%m-%d %H:%M"),
-            "timestamp": datetime.now().strftime("%Y%m%d_%H%M%S")
+            "timestamp": datetime.now().strftime("%Y%m%d_%H%M%S"),
+            "training_mode": training_mode          # ← 新增這一行！
         },
         "model": model_dict,
         "training": {
+            "mode": training_mode,                  # ← 新增：更清楚的位置
             "lr": float(getattr(cfg, "lr", 0.01)),
             "epochs": int(getattr(cfg, "epochs", 300)),
             "patience": int(getattr(cfg, "patience", 25)),
-            "weight_decay": float(getattr(cfg, "weight_decay", 5e-4))
+            "weight_decay": float(getattr(cfg, "weight_decay", 5e-4)),
+            "use_pipeline": bool(use_pipeline)      # ← 也直接存 boolean，方便閱讀
         },
         "data": {
             "use_degree": bool(getattr(cfg, "use_degree", False)),
