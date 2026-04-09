@@ -25,70 +25,44 @@ from src.models import (
     DGT
 )
 
-# ====================== 使用者設定區 ======================
-start_exp_no = 1                                                # ！！！！！！！！！！！！！！！ ← 你可以自行修改起始實驗編號 ！！！！！！！！！！！！！！！ 
-force_reprocess = True                                           # ！！！！！！！！！！！！！！！ ← 因為你要混用不同 features，強烈建議保持 True ！！！！！！！！！！！！！！！ 
+# ====================== 使用者設定區（只需修改這裡） ======================
+start_exp_no = 1                    # ！！！！重要！！！！從哪一個實驗開始跑（可繼續上次中斷的實驗）
+force_reprocess = True              # 強烈建議保持 True，因為你混用不同 graph features
 
 set_seed(42)
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-# ====================== 1. 資料集載入（每次實驗前強制重新處理） ======================
-print(" 準備 Elliptic 資料集...")
+# ====================== 載入獨立實驗配置檔 ======================
+# 以後所有實驗設定都在 experiments/config_experiments.py 修改，不用再改這個 main.py
+try:
+    from experiments.config_experiments import SELECTED_EXPERIMENTS as experiment_configs
+    print(f" 已成功載入 experiments/config_experiments.py")
+    print(f"   共載入 {len(experiment_configs)} 個實驗組合")
+    print(f"   將從實驗編號 exp_{start_exp_no} 開始執行\n")
+except ImportError:
+    print(" 找不到 experiments/config_experiments.py 檔案！")
+    print("   請先建立 experiments/config_experiments.py 檔案")
+    sys.exit(1)
+
+# ====================== 1. 資料集載入準備 ======================
+print("準備 Elliptic 資料集...")
 
 processed_path = os.path.join(project_root, "data/processed/elliptic_processed.pt")
 
 if force_reprocess and os.path.exists(processed_path):
     os.remove(processed_path)
-    print("  已刪除舊的 processed 檔案 → 每個實驗都會重新處理特徵\n")
+    print("已刪除舊的 processed 檔案 → 每個實驗都會重新計算 graph features\n")
 else:
-    print(" 使用現有 processed 檔案（若要強制重新處理請把 force_reprocess 設為 True）\n")
+    print("使用現有 processed 檔案（若要強制重新處理請把 force_reprocess 設為 True）\n")
 
-# ====================== 2. 定義實驗組合（可混用不同 features） ======================
-experiment_configs = [
-    # 1-10: GraphSAGE + Pipeline (最推薦的 baseline 群)
-    {"model_name": "GraphSAGE", "use_pipeline": True,  "hidden_dim": 32, "num_layers": 3, "dropout": 0.45, "lr": 0.002, "epochs": 10, "use_degree": True,  "use_pagerank": True,  "use_clustering": False, "use_eigenvector": False, "aggregator": "mean"},
-    {"model_name": "GraphSAGE", "use_pipeline": True,  "hidden_dim": 64, "num_layers": 3, "dropout": 0.3,  "lr": 0.001, "epochs": 20, "use_degree": True,  "use_pagerank": True,  "use_clustering": True,  "use_eigenvector": False, "aggregator": "mean"},
-    {"model_name": "GraphSAGE", "use_pipeline": True,  "hidden_dim": 128,"num_layers": 2, "dropout": 0.45, "lr": 0.002, "epochs": 15, "use_degree": True,  "use_pagerank": False, "use_clustering": True,  "use_eigenvector": True,  "aggregator": "mean"},
-    {"model_name": "GraphSAGE", "use_pipeline": True,  "hidden_dim": 32, "num_layers": 4, "dropout": 0.6,  "lr": 0.005, "epochs": 10, "use_degree": False, "use_pagerank": True,  "use_clustering": True,  "use_eigenvector": True,  "aggregator": "pool"},
-    {"model_name": "GraphSAGE", "use_pipeline": True,  "hidden_dim": 64, "num_layers": 3, "dropout": 0.45, "lr": 0.002, "epochs": 20, "use_degree": True,  "use_pagerank": True,  "use_clustering": False, "use_eigenvector": True,  "aggregator": "lstm"},
+# ====================== 2. 逐一執行批量實驗 ======================
+print(f"開始批量執行 {len(experiment_configs)} 個實驗... 起始編號 = exp_{start_exp_no}\n")
 
-    # 11-15: GraphSAGE + End-to-End
-    {"model_name": "GraphSAGE", "use_pipeline": False, "hidden_dim": 32, "num_layers": 3, "dropout": 0.45, "lr": 0.002, "epochs": 10, "use_degree": True,  "use_pagerank": True,  "use_clustering": False, "use_eigenvector": False, "aggregator": "mean"},
-    {"model_name": "GraphSAGE", "use_pipeline": False, "hidden_dim": 64, "num_layers": 3, "dropout": 0.3,  "lr": 0.001, "epochs": 20, "use_degree": True,  "use_pagerank": True,  "use_clustering": True,  "use_eigenvector": False, "aggregator": "mean"},
-    {"model_name": "GraphSAGE", "use_pipeline": False, "hidden_dim": 128,"num_layers": 2, "dropout": 0.45, "lr": 0.002, "epochs": 15, "use_degree": True,  "use_pagerank": False, "use_clustering": True,  "use_eigenvector": True,  "aggregator": "mean"},
-
-    # 16-25: GAT (multi-head attention 很適合 anomaly)
-    {"model_name": "GAT", "use_pipeline": True,  "hidden_dim": 32, "num_layers": 3, "dropout": 0.45, "lr": 0.002, "epochs": 10, "use_degree": True,  "use_pagerank": True,  "use_clustering": False, "use_eigenvector": False, "heads": 8},
-    {"model_name": "GAT", "use_pipeline": True,  "hidden_dim": 64, "num_layers": 3, "dropout": 0.3,  "lr": 0.001, "epochs": 20, "use_degree": True,  "use_pagerank": True,  "use_clustering": True,  "use_eigenvector": False, "heads": 8},
-    {"model_name": "GAT", "use_pipeline": True,  "hidden_dim": 128,"num_layers": 2, "dropout": 0.45, "lr": 0.002, "epochs": 15, "use_degree": True,  "use_pagerank": False, "use_clustering": True,  "use_eigenvector": True,  "heads": 4},
-    {"model_name": "GAT", "use_pipeline": False, "hidden_dim": 32, "num_layers": 3, "dropout": 0.45, "lr": 0.002, "epochs": 10, "use_degree": True,  "use_pagerank": True,  "use_clustering": False, "use_eigenvector": False, "heads": 8},
-    {"model_name": "GAT", "use_pipeline": False, "hidden_dim": 64, "num_layers": 3, "dropout": 0.3,  "lr": 0.001, "epochs": 20, "use_degree": True,  "use_pagerank": True,  "use_clustering": True,  "use_eigenvector": False, "heads": 8},
-
-    # 26-35: FastGCN (sampling-based, 適合大圖)
-    {"model_name": "FastGCN", "use_pipeline": True,  "hidden_dim": 32, "num_layers": 3, "dropout": 0.45, "lr": 0.002, "epochs": 10, "use_degree": True,  "use_pagerank": True,  "use_clustering": False, "use_eigenvector": False},
-    {"model_name": "FastGCN", "use_pipeline": True,  "hidden_dim": 64, "num_layers": 3, "dropout": 0.3,  "lr": 0.001, "epochs": 20, "use_degree": True,  "use_pagerank": True,  "use_clustering": True,  "use_eigenvector": False},
-    {"model_name": "FastGCN", "use_pipeline": False, "hidden_dim": 32, "num_layers": 3, "dropout": 0.45, "lr": 0.002, "epochs": 10, "use_degree": True,  "use_pagerank": True,  "use_clustering": False, "use_eigenvector": False},
-    {"model_name": "FastGCN", "use_pipeline": False, "hidden_dim": 64, "num_layers": 3, "dropout": 0.3,  "lr": 0.001, "epochs": 20, "use_degree": True,  "use_pagerank": True,  "use_clustering": True,  "use_eigenvector": False},
-
-    # 36-45: EvolveGCN (temporal evolution 適合 Elliptic)
-    {"model_name": "EvolveGCN", "use_pipeline": True,  "hidden_dim": 32, "num_layers": 3, "dropout": 0.45, "lr": 0.002, "epochs": 10, "use_degree": True,  "use_pagerank": True,  "use_clustering": False, "use_eigenvector": False},
-    {"model_name": "EvolveGCN", "use_pipeline": True,  "hidden_dim": 64, "num_layers": 3, "dropout": 0.3,  "lr": 0.001, "epochs": 20, "use_degree": True,  "use_pagerank": True,  "use_clustering": True,  "use_eigenvector": False},
-    {"model_name": "EvolveGCN", "use_pipeline": False, "hidden_dim": 32, "num_layers": 3, "dropout": 0.45, "lr": 0.002, "epochs": 10, "use_degree": True,  "use_pagerank": True,  "use_clustering": False, "use_eigenvector": False},
-    {"model_name": "EvolveGCN", "use_pipeline": False, "hidden_dim": 64, "num_layers": 3, "dropout": 0.3,  "lr": 0.001, "epochs": 20, "use_degree": True,  "use_pagerank": True,  "use_clustering": True,  "use_eigenvector": False},
-
-    # 46-50: DGT (Dynamic Graph Transformer)
-    {"model_name": "DGT", "use_pipeline": True,  "hidden_dim": 32, "num_layers": 3, "dropout": 0.45, "lr": 0.002, "epochs": 10, "use_degree": True,  "use_pagerank": True,  "use_clustering": False, "use_eigenvector": False, "heads": 4},
-    {"model_name": "DGT", "use_pipeline": True,  "hidden_dim": 64, "num_layers": 3, "dropout": 0.3,  "lr": 0.001, "epochs": 20, "use_degree": True,  "use_pagerank": True,  "use_clustering": True,  "use_eigenvector": False, "heads": 8},
-    {"model_name": "DGT", "use_pipeline": False, "hidden_dim": 32, "num_layers": 3, "dropout": 0.45, "lr": 0.002, "epochs": 10, "use_degree": True,  "use_pagerank": True,  "use_clustering": False, "use_eigenvector": False, "heads": 4},
-    {"model_name": "DGT", "use_pipeline": False, "hidden_dim": 64, "num_layers": 3, "dropout": 0.3,  "lr": 0.001, "epochs": 20, "use_degree": True,  "use_pagerank": True,  "use_clustering": True,  "use_eigenvector": False, "heads": 8},
-]
-
-print(f" 開始批量執行 {len(experiment_configs)} 個實驗... 起始編號 = exp_{start_exp_no}\n")
-
-# ====================== 3. 逐一執行實驗 ======================
 for i, params in enumerate(experiment_configs, start=start_exp_no):
-    print(f"{'='*100}\n=== 實驗 {i-start_exp_no+1}/{len(experiment_configs)} : {params['model_name']} "
-          f"(Pipeline={params['use_pipeline']}) ===\n{'='*100}")
+    print(f"{'='*100}")
+    print(f"=== 實驗 {i-start_exp_no+1}/{len(experiment_configs)} : {params['model_name']} "
+          f"(Pipeline={params['use_pipeline']}) ===")
+    print(f"{'='*100}")
     
     cfg = Config()
     
@@ -109,14 +83,17 @@ for i, params in enumerate(experiment_configs, start=start_exp_no):
     if "heads" in params:
         cfg.heads = params["heads"]
 
-    # ====================== 重要：傳入額外特徵設定 ======================
+    if "aggregator" in params:
+        cfg.aggregator = params["aggregator"]
+
+    # ====================== 重要：傳入額外 graph features ======================
     cfg.use_degree       = params.get("use_degree", False)
     cfg.use_pagerank     = params.get("use_pagerank", False)
     cfg.use_clustering   = params.get("use_clustering", False)
     cfg.use_eigenvector  = params.get("use_eigenvector", False)
     cfg.use_betweenness  = params.get("use_betweenness", False)
 
-    # 建立實驗資料夾
+    # 建立實驗資料夾並儲存 config
     exp_dir = create_experiment(
         cfg, 
         description=f"Batch run: {params['model_name']} | Pipeline={params['use_pipeline']} | "
@@ -124,14 +101,13 @@ for i, params in enumerate(experiment_configs, start=start_exp_no):
                     f"eig={cfg.use_eigenvector}, bet={cfg.use_betweenness}"
     )
     
-    # ====================== 每次實驗前強制重新處理資料（因為 features 不同） ======================
+    # 每次實驗前強制重新處理資料（因為 features 組合不同）
     if force_reprocess:
-        processed_path = os.path.join(project_root, "data/processed/elliptic_processed.pt")
         if os.path.exists(processed_path):
             os.remove(processed_path)
             print(f"  實驗 {cfg.exp_name} → 已刪除舊 processed 檔案，重新計算 graph features...")
 
-    # 載入資料集（此時會根據 cfg 中的 use_xxx 參數計算對應的特徵）
+    # 載入資料集
     dataset = EllipticDataset(
         root=str(cfg.data_dir),
         use_degree=cfg.use_degree,
@@ -147,7 +123,7 @@ for i, params in enumerate(experiment_configs, start=start_exp_no):
 
     print(f"   → 目前特徵維度: {x.shape[1]} (含額外 graph features)")
 
-    # Temporal split
+    # Temporal split（Elliptic 推薦做法）
     train_idx, val_idx, test_idx = split_data(
         data=data, y=y, device=device,
         temporal_split=True, test_time_threshold=34,
@@ -162,7 +138,7 @@ for i, params in enumerate(experiment_configs, start=start_exp_no):
             hidden_dim=cfg.hidden_dim,
             num_layers=cfg.num_layers,
             dropout=cfg.dropout,
-            aggregator="mean"
+            aggregator=cfg.aggregator if hasattr(cfg, "aggregator") else "mean"
         ).to(device)
     elif model_name_upper == "GAT":
         model = ImprovedGAT(
@@ -206,6 +182,8 @@ for i, params in enumerate(experiment_configs, start=start_exp_no):
     
     print(f" 實驗 {cfg.exp_name} 完成！ Test AUC = {test_auc:.4f} | AUPRC = {test_auprc:.4f}\n")
 
+print("=" * 100)
 print(" 所有批量實驗已完成！")
-print("    請查看 experiments/experiments_summary.csv 進行比較")
-print("    每個實驗的完整結果都在 experiments/ 對應資料夾內")
+print("   請查看 experiments/experiments_summary.csv 進行比較")
+print("   每個實驗的詳細結果（config.yaml、results.json、model_best.pt）都在 experiments/ 資料夾內")
+print("=" * 100)
