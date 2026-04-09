@@ -109,6 +109,7 @@ def create_experiment(cfg, description: Optional[str] = None) -> str:
             "use_clustering": bool(getattr(cfg, "use_clustering", False)),
             "use_eigenvector": bool(getattr(cfg, "use_eigenvector", False)),
             "use_betweenness": bool(getattr(cfg, "use_betweenness", False)),
+            "use_antibenford": bool(getattr(cfg, "use_antibenford", False)),
             "split": "temporal"
         }
     }
@@ -248,6 +249,7 @@ def log_experiment_to_csv(exp_dir: str, cfg, class_weights: list = None) -> None
         "clu": bool(getattr(cfg, "use_clustering", False)),
         "eig": bool(getattr(cfg, "use_eigenvector", False)),
         "bet": bool(getattr(cfg, "use_betweenness", False)),
+        "anti": bool(getattr(cfg, "use_antibenford", False)),
         "early_stop": results.get("patience_used_after_best", 0) > 0,
         "time(s)": round(results.get("training_time_seconds", 0.0), 2),
         "class_weight": cw_str
@@ -264,7 +266,7 @@ def log_experiment_to_csv(exp_dir: str, cfg, class_weights: list = None) -> None
     desired_columns = [
         "exp_no", "exp_name", "timestamp", "training_mode", "model_name",
         "t_auc", "t_auprc", "t_f1", "t_mcc", "hidden_d", "num_lay", "lr", 
-        "epoch", "patience", "dropout", "aggr", "deg", "pr", "clu", "eig", "bet",
+        "epoch", "patience", "dropout", "aggr", "deg", "pr", "clu", "eig", "bet", "anti",
         "early_stop", "time(s)", "class_weight"
     ]
     

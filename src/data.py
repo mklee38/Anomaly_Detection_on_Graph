@@ -12,6 +12,30 @@ import numpy as np
 from sklearn.preprocessing import StandardScaler
 
 
+def compute_antibenford_scores(raw_features: np.ndarray) -> np.ndarray:
+    """Compute per-node AntiBenford score using first-digit distribution deviation."""
+    benford = np.log10(1 + 1 / np.arange(1, 10, dtype=np.float64))
+
+    values = np.abs(raw_features.astype(np.float64, copy=False))
+    valid_mask = values > 0
+
+    safe_values = np.where(valid_mask, values, 1.0)
+    first_digits = np.floor(
+        safe_values / np.power(10.0, np.floor(np.log10(safe_values)))
+    ).astype(np.int16)
+    first_digits[~valid_mask] = 0
+
+    valid_count = valid_mask.sum(axis=1)
+    digit_counts = np.stack([(first_digits == d).sum(axis=1) for d in range(1, 10)], axis=1)
+
+    denom = np.clip(valid_count, 1, None).astype(np.float64)
+    observed = digit_counts / denom[:, None]
+    anti_benford = np.abs(observed - benford[None, :]).sum(axis=1)
+    anti_benford[valid_count == 0] = 0.0
+
+    return anti_benford.astype(np.float32)
+
+
 
 class EllipticDataset(InMemoryDataset):
     """
@@ -28,12 +52,14 @@ class EllipticDataset(InMemoryDataset):
                  use_pagerank: bool = False,
                  use_clustering: bool = False,     
                  use_eigenvector: bool = False,     
-                 use_betweenness: bool = False):    
+                 use_betweenness: bool = False,
+                 use_antibenford: bool = False):    
         self.use_degree = use_degree                     
         self.use_pagerank = use_pagerank                 
         self.use_clustering = use_clustering          
         self.use_eigenvector = use_eigenvector         
-        self.use_betweenness = use_betweenness         
+        self.use_betweenness = use_betweenness
+        self.use_antibenford = use_antibenford
         
         super().__init__(root, transform, pre_transform, pre_filter)
         self.load(self.processed_paths[0])
@@ -65,6 +91,7 @@ class EllipticDataset(InMemoryDataset):
         tx_ids = features.iloc[:, 0].values.astype(np.int64)                        # 取第一列作為 txId，轉成 numpy array，並確保是 int64 類型。    
         time_steps = features.iloc[:, 1].values.astype(np.int64)                    # 取第二列作為 time step，轉成 numpy array，並確保是 int64 類型。
         node_features = features.iloc[:, 2:].values.astype(np.float32)              # 從第三列開始是特徵，轉成 numpy array，並確保是 float32 類型，這樣後面轉成 tensor 時就不會占太多記憶體。
+        raw_node_features = node_features.copy()
 
         print(f"Nodes: {len(features)}, Features dim: {node_features.shape[1]}")
         print(f"Sample txIds (col 0): {tx_ids[:5].tolist()}")
@@ -207,6 +234,14 @@ class EllipticDataset(InMemoryDataset):
                 print(f"Betweenness Centrality 計算失敗: {e}")
                 zero_vec = torch.zeros(x.size(0), 1, dtype=torch.float32)
                 x = torch.cat([x, zero_vec], dim=1)
+
+        # AntiBenford Feature（依每個節點特徵的一位數分佈偏離 Benford Law 程度）
+        if self.use_antibenford:
+            print("計算 AntiBenford Feature...")
+            anti_benford_scores = compute_antibenford_scores(raw_node_features)
+            anti_benford = torch.from_numpy(anti_benford_scores).unsqueeze(1)
+            x = torch.cat([x, anti_benford], dim=1)
+            print(f"加入 AntiBenford Feature → x dim: {x.shape[1]}")
 
 
 

@@ -97,13 +97,14 @@ for i, params in enumerate(experiment_configs, start=start_exp_no):
     cfg.use_clustering   = params.get("use_clustering", False)
     cfg.use_eigenvector  = params.get("use_eigenvector", False)
     cfg.use_betweenness  = params.get("use_betweenness", False)
+    cfg.use_antibenford  = params.get("use_antibenford", False)
 
     # 建立實驗資料夾並儲存 config
     exp_dir = create_experiment(
         cfg, 
         description=f"Batch run: {params['model_name']} | Pipeline={params['use_pipeline']} | "
                     f"deg={cfg.use_degree}, pr={cfg.use_pagerank}, clu={cfg.use_clustering}, "
-                    f"eig={cfg.use_eigenvector}, bet={cfg.use_betweenness}"
+                    f"eig={cfg.use_eigenvector}, bet={cfg.use_betweenness}, anti={cfg.use_antibenford}"
     )
     
     # 每次實驗前強制重新處理資料（因為 features 組合不同）
@@ -119,7 +120,8 @@ for i, params in enumerate(experiment_configs, start=start_exp_no):
         use_pagerank=cfg.use_pagerank,
         use_clustering=cfg.use_clustering,
         use_eigenvector=cfg.use_eigenvector,
-        use_betweenness=cfg.use_betweenness
+        use_betweenness=cfg.use_betweenness,
+        use_antibenford=cfg.use_antibenford
     )
     data = dataset[0]
     x = data.x.to(device)

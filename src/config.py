@@ -54,6 +54,7 @@ class Config:
     use_clustering: bool = False      
     use_eigenvector: bool = False     
     use_betweenness: bool = False     
+    use_antibenford: bool = False
 
     def __post_init__(self):            # __post_init__ 就是在 dataclass 物件「剛剛建立好」之後，馬上自動執行的初始化後處理函數。
         self.processed_dir.mkdir(parents=True, exist_ok=True)   # 確保 processed 資料夾存在，parents=True 會自動建立不存在的父資料夾，exist_ok=True 會在資料夾已存在時不報錯。

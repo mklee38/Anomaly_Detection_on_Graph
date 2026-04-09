@@ -6,6 +6,8 @@ from torch.optim import Adam
 from datetime import datetime
 import os
 import time
+import json
+import csv
 import xgboost as xgb
 import numpy as np
 from typing import Tuple, Optional
@@ -163,9 +165,14 @@ def _generic_pipeline(
     original_features = x.cpu().numpy()
     if getattr(cfg, "concat_features", True):
         X_all = np.hstack([original_features, embeddings])
+        feature_names = [
+            *[f"orig_{i}" for i in range(original_features.shape[1])],
+            *[f"emb_{i}" for i in range(embeddings.shape[1])]
+        ]
         print(f" 已 concat 原始 features + GNN embeddings → 新 dimension = {X_all.shape[1]}")
     else:
         X_all = embeddings
+        feature_names = [f"emb_{i}" for i in range(embeddings.shape[1])]
 
     X_train = X_all[train_idx.cpu().numpy()]
     y_train = y[train_idx].cpu().numpy()
@@ -174,9 +181,9 @@ def _generic_pipeline(
     X_test  = X_all[test_idx.cpu().numpy()]
     y_test  = y[test_idx].cpu().numpy()
 
-    dtrain = xgb.DMatrix(X_train, label=y_train)
-    dval   = xgb.DMatrix(X_val, label=y_val)
-    dtest  = xgb.DMatrix(X_test, label=y_test)
+    dtrain = xgb.DMatrix(X_train, label=y_train, feature_names=feature_names)
+    dval   = xgb.DMatrix(X_val, label=y_val, feature_names=feature_names)
+    dtest  = xgb.DMatrix(X_test, label=y_test, feature_names=feature_names)
 
     params = {
         'objective': 'binary:logistic',
@@ -227,6 +234,40 @@ def _generic_pipeline(
     )
 
     bst.save_model(f"{exp_dir}/xgboost_pipeline.json")
+
+    importance_gain = bst.get_score(importance_type='gain')
+    importance_weight = bst.get_score(importance_type='weight')
+    importance_cover = bst.get_score(importance_type='cover')
+
+    importance_rows = []
+    for fname in feature_names:
+        importance_rows.append({
+            "feature": fname,
+            "gain": float(importance_gain.get(fname, 0.0)),
+            "weight": int(importance_weight.get(fname, 0.0)),
+            "cover": float(importance_cover.get(fname, 0.0))
+        })
+
+    importance_rows.sort(key=lambda item: item["gain"], reverse=True)
+
+    importance_json_path = f"{exp_dir}/xgboost_feature_importance.json"
+    with open(importance_json_path, "w", encoding="utf-8") as f:
+        json.dump(importance_rows, f, indent=2, ensure_ascii=False)
+
+    importance_csv_path = f"{exp_dir}/xgboost_feature_importance.csv"
+    with open(importance_csv_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=["feature", "gain", "weight", "cover"])
+        writer.writeheader()
+        writer.writerows(importance_rows)
+
+    print(f"\n [Pipeline] XGBoost feature importance 已儲存：{importance_csv_path}")
+    print(" [Pipeline] Top-10 features by gain:")
+    for idx, row in enumerate(importance_rows[:10], start=1):
+        print(
+            f"   {idx:2d}. {row['feature']} | gain={row['gain']:.6f} "
+            f"| weight={row['weight']} | cover={row['cover']:.6f}"
+        )
+
     print_experiment_summary(exp_dir, cfg)
     
     # ←←← 新增這一段（完整顯示最終指標） ←←←
