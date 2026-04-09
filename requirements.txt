@@ -1,15 +1,23 @@
+## Base requirements for experiments in this repository
+# Adjust CUDA / PyTorch versions to match your system (see https://pytorch.org/)
 torch>=2.3.0
-torchvision>=0.18.0          # 可選，但常一起裝
-torchaudio>=2.3.0            # 可選
+torchvision>=0.18.0
+torchaudio>=2.3.0
+
+# PyTorch Geometric: follow official install instructions for matching torch+CUDA
+# https://pytorch-geometric.readthedocs.io/en/latest/notes/installation.html
 torch-geometric>=2.5.0
+
 networkx>=3.3
 pandas>=2.2.0
 numpy>=1.26.0
-matplotlib>=3.8.0            # 如果你要畫圖檢查 degree distribution 或 PageRank
-tqdm>=4.66.0                 # 進度條（很多 GAD 程式碼會用）
-scikit-learn>=1.5.0          # 計算 AUC、precision 等評估指標時常用
+matplotlib>=3.8.0
+tqdm>=4.66.0
+scikit-learn>=1.5.0
+
+# Pipeline / utilities
 PyYAML>=6.0.1
 xgboost>=2.1.0
 
-
-# pip install -r requirements.txt
+# Optional (development / plotting)
+# seaborn
