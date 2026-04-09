@@ -29,6 +29,7 @@ class Config:
     hidden_dim: int = 128
     num_layers: int = 3
     aggregator: str = "mean"          # mean / lstm / pool (GraphSAGE 支援)
+    lstm_max_neighbors: int = 4        # 僅 GraphSAGE+LSTM 使用：每個目標節點最多保留多少鄰居，避免大圖爆記憶體
     dropout: float = 0.2              # 0.2，GraphSAGE 的 dropout rate，訓練時會隨機丟棄一些神經元，幫助防止過擬合。
     heads: int = 8                    # DGT 和 GAT 的 multi-head attention 的頭數，GAT 的話會自動設為 8，如果你想改就改這裡，不要改模型裡的預設值！
 

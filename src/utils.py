@@ -80,10 +80,10 @@ def create_experiment(cfg, description: Optional[str] = None) -> str:
         model_dict["aggregator"] = getattr(cfg, "aggregator", "mean")
         model_dict["heads"] = None
     elif model_name == "GAT":
-        model_dict["aggregator"] = None
+        model_dict["aggregator"] = "N/A"
         model_dict["heads"] = getattr(cfg, "heads", 8)
     else:
-        model_dict["aggregator"] = getattr(cfg, "aggregator", None)
+        model_dict["aggregator"] = "N/A"
         model_dict["heads"] = getattr(cfg, "heads", None)
 
     config_dict = {
@@ -220,6 +220,12 @@ def log_experiment_to_csv(exp_dir: str, cfg, class_weights: list = None) -> None
 
     cw_str = str(class_weights.cpu().tolist() if torch.is_tensor(class_weights) else (class_weights or [1.0, 15.0]))
 
+    model_name_for_log = str(config.get("model", {}).get("name", "")).upper()
+    if model_name_for_log == "GRAPHSAGE":
+        aggr_for_log = config.get("model", {}).get("aggregator", getattr(cfg, "aggregator", "mean"))
+    else:
+        aggr_for_log = "N/A"
+
     record = {
         "exp_no": exp_no,
         "exp_name": exp_name,
@@ -236,7 +242,7 @@ def log_experiment_to_csv(exp_dir: str, cfg, class_weights: list = None) -> None
         "epoch": results.get("epochs_trained", 0),
         "patience": getattr(cfg, "patience", 25),
         "dropout": float(getattr(cfg, "dropout", 0.0)),
-        "aggr": config.get("model", {}).get("aggregator", getattr(cfg, "aggregator", None)),
+        "aggr": aggr_for_log,
         "deg": bool(getattr(cfg, "use_degree", False)),
         "pr": bool(getattr(cfg, "use_pagerank", False)),
         "clu": bool(getattr(cfg, "use_clustering", False)),

@@ -6,6 +6,7 @@ import torch.nn as nn
 import torch.nn.init as init
 from typing import Optional          
 from torch_geometric.nn import SAGEConv, GATConv, GCNConv, TransformerConv
+from torch_geometric.utils import sort_edge_index
 
 
 class ImprovedGraphSAGE(nn.Module):
@@ -20,7 +21,8 @@ class ImprovedGraphSAGE(nn.Module):
         hidden_dim: int,
         num_layers: int,
         dropout: float = 0.2,
-        aggregator: str = "mean"
+        aggregator: str = "mean",
+        lstm_max_neighbors: Optional[int] = 4
     ):
         super().__init__()
 
@@ -31,6 +33,8 @@ class ImprovedGraphSAGE(nn.Module):
         self.num_layers = num_layers
         self.dropout_rate = dropout
         self.aggregator = aggregator
+        self.lstm_max_neighbors = lstm_max_neighbors
+        self._lstm_cap_logged = False
 
         # Build convolution layers
         self.convs = nn.ModuleList()
@@ -72,8 +76,41 @@ class ImprovedGraphSAGE(nn.Module):
         print(f" Kaiming initialization + Residual Connections applied "
               f"(layers={self.num_layers}, hidden={self.hidden_dim})")
 
+    def _prepare_edge_index(self, edge_index: torch.Tensor, num_nodes: int) -> torch.Tensor:
+        """LSTM aggregator in SAGEConv requires destination-sorted edge_index."""
+        if str(self.aggregator).lower() == "lstm":
+            sorted_edge_index = sort_edge_index(edge_index, num_nodes=num_nodes, sort_by_row=False)
+
+            # Bound per-destination neighborhood size to avoid huge dense batches in LSTMAggregation.
+            if self.lstm_max_neighbors is not None and self.lstm_max_neighbors > 0:
+                original_edges = int(sorted_edge_index.size(1))
+                dst = sorted_edge_index[1]
+                keep = torch.zeros(dst.size(0), dtype=torch.bool, device=dst.device)
+                seen = {}
+
+                for i in range(dst.size(0)):
+                    node = int(dst[i].item())
+                    count = seen.get(node, 0)
+                    if count < self.lstm_max_neighbors:
+                        keep[i] = True
+                    seen[node] = count + 1
+
+                sorted_edge_index = sorted_edge_index[:, keep]
+
+                if not self._lstm_cap_logged:
+                    kept_edges = int(sorted_edge_index.size(1))
+                    print(
+                        f" GraphSAGE LSTM neighbor cap active: "
+                        f"max_neighbors={self.lstm_max_neighbors}, edges {original_edges} -> {kept_edges}"
+                    )
+                    self._lstm_cap_logged = True
+
+            return sorted_edge_index
+        return edge_index
+
     def forward(self, x: torch.Tensor, edge_index: torch.Tensor) -> torch.Tensor:
         """End-to-end forward pass"""
+        edge_index = self._prepare_edge_index(edge_index, num_nodes=x.size(0))
         x = self.convs[0](x, edge_index).relu()
         x = self.dropout(x)
 
@@ -95,6 +132,7 @@ class ImprovedGraphSAGE(nn.Module):
         回傳 GNN 最後一層的 hidden representation（不經過 classifier）
         → 這就是論文 GraphSAGE Pipeline 所需要的 node embeddings
         """
+        edge_index = self._prepare_edge_index(edge_index, num_nodes=x.size(0))
         # First layer
         x = self.convs[0](x, edge_index).relu()
         x = self.dropout(x)

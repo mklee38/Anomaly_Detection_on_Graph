@@ -8,6 +8,8 @@ numpy>=1.26.0
 matplotlib>=3.8.0            # 如果你要畫圖檢查 degree distribution 或 PageRank
 tqdm>=4.66.0                 # 進度條（很多 GAD 程式碼會用）
 scikit-learn>=1.5.0          # 計算 AUC、precision 等評估指標時常用
+PyYAML>=6.0.1
+xgboost>=2.1.0
 
 
 # pip install -r requirements.txt

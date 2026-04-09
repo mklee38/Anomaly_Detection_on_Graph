@@ -85,6 +85,11 @@ for i, params in enumerate(experiment_configs, start=start_exp_no):
 
     if "aggregator" in params:
         cfg.aggregator = params["aggregator"]
+    elif "aggrator" in params:
+        cfg.aggregator = params["aggrator"]
+
+    if "lstm_max_neighbors" in params:
+        cfg.lstm_max_neighbors = params["lstm_max_neighbors"]
 
     # ====================== 重要：傳入額外 graph features ======================
     cfg.use_degree       = params.get("use_degree", False)
@@ -138,7 +143,8 @@ for i, params in enumerate(experiment_configs, start=start_exp_no):
             hidden_dim=cfg.hidden_dim,
             num_layers=cfg.num_layers,
             dropout=cfg.dropout,
-            aggregator=cfg.aggregator if hasattr(cfg, "aggregator") else "mean"
+            aggregator=cfg.aggregator if hasattr(cfg, "aggregator") else "mean",
+            lstm_max_neighbors=getattr(cfg, "lstm_max_neighbors", 4)
         ).to(device)
     elif model_name_upper == "GAT":
         model = ImprovedGAT(

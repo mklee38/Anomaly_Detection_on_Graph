@@ -154,9 +154,11 @@ def _generic_pipeline(
     print(f" Training started at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
 
     # Get embeddings
+    print(" [Pipeline] Step 1/2: extracting Graph embeddings...")
     model.eval()
     with torch.no_grad():
         embeddings = model.get_embeddings(x, edge_index).cpu().numpy()
+    print(f" [Pipeline] Embeddings ready: shape={embeddings.shape}")
 
     original_features = x.cpu().numpy()
     if getattr(cfg, "concat_features", True):
@@ -186,9 +188,10 @@ def _generic_pipeline(
         'seed': getattr(cfg, 'random_seed', 42)
     }
 
+    print(" [Pipeline] Step 2/2: training XGBoost...")
     bst = xgb.train(params, dtrain, num_boost_round=500,
                     evals=[(dtrain, 'train'), (dval, 'val')],
-                    early_stopping_rounds=50, verbose_eval=False)
+                    early_stopping_rounds=50, verbose_eval=50)
 
     test_pred_prob = bst.predict(dtest)
     metrics = evaluate_xgboost(y_test, test_pred_prob)
